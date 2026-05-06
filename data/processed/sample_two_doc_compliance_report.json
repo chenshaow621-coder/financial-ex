@@ -1,0 +1,66 @@
+{
+  "overall_status": "FAIL",
+  "summary": {
+    "PASS": 0,
+    "FAIL": 1,
+    "SKIP": 6
+  },
+  "results": [
+    {
+      "status": "SKIP",
+      "reason": "缺少 issue_date 或 core_date。",
+      "rule_id": "REF-001",
+      "sequence": 1,
+      "expert_rule": "转账支票正面出票日期与核心日期(集中作业报文上送)比较小于等于10日为通过",
+      "check_type": "ISSUE_DATE_WITHIN_10_DAYS"
+    },
+    {
+      "status": "SKIP",
+      "reason": "缺少 issue_date 或 issue_date_chinese。",
+      "rule_id": "REF-002",
+      "sequence": 2,
+      "expert_rule": "转账支票正面的出票日期校验是否合规\n规则：壹月贰月前零字必写，叁月至玖月前零字可写可不写。拾月至拾贰月必须写成壹拾月、壹拾壹月、壹拾贰月(前面多写了“零”字也认可，如零壹拾月)。 壹日至玖日前零字必写，拾日至拾玖日必须写成壹拾日及壹拾x日(前面多写了“零”字也认可，如零壹拾伍日，下同)，贰拾日至贰拾玖日必须写成贰拾日及贰拾x日，叁拾日至叁拾壹日必须写成叁拾日及叁拾壹日。",
+      "check_type": "ISSUE_DATE_IN_CHINESE_UPPERCASE"
+    },
+    {
+      "status": "SKIP",
+      "reason": "缺少 amount_numeric。",
+      "rule_id": "REF-003",
+      "sequence": 3,
+      "expert_rule": "转账支票正面的小写金额需要有单位符号，且需要为￥符号",
+      "check_type": "LOWER_AMOUNT_HAS_RMB_SYMBOL"
+    },
+    {
+      "status": "SKIP",
+      "reason": "缺少 amount_numeric 或 amount_upper。",
+      "rule_id": "REF-004",
+      "sequence": 4,
+      "expert_rule": "支票大写金额=支票小写金额",
+      "check_type": "UPPER_AMOUNT_EQUALS_LOWER_AMOUNT"
+    },
+    {
+      "status": "FAIL",
+      "reason": "金额为空。",
+      "rule_id": "REF-005",
+      "sequence": 5,
+      "expert_rule": "支票金额不能为空",
+      "check_type": "AMOUNT_IS_REQUIRED"
+    },
+    {
+      "status": "SKIP",
+      "reason": "缺少 amount_upper。",
+      "rule_id": "REF-006",
+      "sequence": 6,
+      "expert_rule": "转账支票大写金额规范性：1.中文大写金额数字到“元”为止的，在“元”之后，应写“整”（或“正”）字，在“角”之后可以不写“整”（或“正”）字。大写金额数字有“分”的，“分”后面不写“整”（或“正”）字。2.识别“正”=“整”，“元”=“圆”。3.阿拉伯数字中间有“O”时，中文大写金额要写“零”字。阿拉伯数字中间连续有几个“0”时，中文大写金额中间可以只写一个“零”字。阿拉伯金额数字万位或元位是“0”，或者数字中间连续有几个“0”，万位、元位也是“0’，但千位、角位不是“0”时，中文大写金额中可以只写一个零字，也可以不写“零”字。阿拉伯金额数字角位是“0”，而分位不是“0”时，中文大写金额“元”后面应写“零”字。",
+      "check_type": "UPPER_AMOUNT_FORMAT_IS_VALID"
+    },
+    {
+      "status": "SKIP",
+      "reason": "缺少 signatures。",
+      "rule_id": "REF-007",
+      "sequence": 7,
+      "expert_rule": "转账支票签章是否完整，有财务专用章及个人章",
+      "check_type": "SIGNATURE_SET_IS_COMPLETE"
+    }
+  ]
+}

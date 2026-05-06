@@ -1,0 +1,10 @@
+[
+    "MATCHES_SCENE",
+    "HAS_SCENE",
+    "TAGGED_AS",
+    "HAS_MODULE",
+    "HAS_CATEGORY",
+    "INVOLVES_ACTOR",
+    "SCENE_HAS_ACTOR",
+    "HAS_ATOM"
+]

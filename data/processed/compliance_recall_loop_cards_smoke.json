@@ -1,0 +1,1501 @@
+{
+  "question": "未在银行开立存款账户的个人持票人，持银行汇票到银行提示付款，需要提交什么材料、如何签章、能否支取现金？",
+  "raw_query": "银行汇票::持票人",
+  "query_spec": {
+    "raw_query": "银行汇票::持票人",
+    "query": "银行汇票",
+    "who_terms": [
+      "持票人"
+    ]
+  },
+  "prompt_sources": {
+    "atom_enhanced": "D:\\pythonProject-financial ex\\data\\raw\\单条原子版-增强稿.docx",
+    "atom_minimum": "D:\\pythonProject-financial ex\\data\\raw\\原子知识最小可执行颗粒度判断提示词.docx",
+    "set_closure": "D:\\pythonProject-financial ex\\data\\raw\\合规判断主提示词.docx"
+  },
+  "atoms_file": "D:\\pythonProject-financial ex\\data\\processed\\legal_atoms_business_taxonomy.xlsx",
+  "taxonomy_doc": "D:\\pythonProject-financial ex\\data\\raw\\业务分类体系.docx",
+  "model": "qwen-plus",
+  "business_match": {
+    "query": "银行汇票",
+    "who_terms": [
+      "持票人"
+    ],
+    "matched_scene_keys": [
+      "BIZ-02-03-SCENE-01"
+    ],
+    "matched_scene_names": [
+      "银行汇票"
+    ],
+    "matched_module_codes": [
+      "BIZ-02-03"
+    ],
+    "matched_module_paths": [
+      "业务管理类 > 二、支付结算 > 票据结算"
+    ],
+    "matched_categories": [
+      "业务管理类 > 二、支付结算"
+    ],
+    "scene_scores": [
+      {
+        "scene_key": "BIZ-02-03-SCENE-01",
+        "scene_name": "银行汇票",
+        "module_code": "BIZ-02-03",
+        "score": 64
+      }
+    ]
+  },
+  "resume_mode": false,
+  "fresh_initial_recall_atom_count": 28,
+  "resume_from_atom_count": null,
+  "initial_recall_atom_count": 28,
+  "initial_evidence": [
+    {
+      "atom_id": "YZ-PSM-PER-01261",
+      "score": 115.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:未在银行开立存款账户的个人持票人/银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十七条第一句",
+      "rule_type": "PER_AUTH",
+      "who": "未在银行开立存款账户的个人持票人",
+      "where": "任意一家银行机构（不限于出票行或代理行）",
+      "what": "银行汇票",
+      "how": "可向选择的任何一家银行机构提示付款",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01259",
+      "score": 112.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十六条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "在银行开立存款账户的持票人",
+      "where": "开户银行柜台/电子渠道",
+      "what": "银行汇票、解讫通知、进账单及汇票背面签章",
+      "how": "在‘持票人向银行提示付款签章’处签章，且签章须与预留银行签章一致，并送交全部材料",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 一、账户管理 > 账户变更"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01262",
+      "score": 112.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十七条第二句",
+      "rule_type": "OBL_MANDATORY",
+      "who": "未在银行开立存款账户的个人持票人",
+      "where": "银行柜台",
+      "what": "银行汇票背面签章、本人身份证件名称/号码/发证机关信息",
+      "how": "在汇票背面‘持票人向银行提示付款签章’处签章，并填明本人身份证件名称、号码及发证机关",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 信息补录"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01270",
+      "score": 110.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十九条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "持票人",
+      "where": "向出票银行请求付款场景",
+      "what": "本人身份证件或单位证明、银行汇票及解讫通知",
+      "how": "作出说明并提交材料",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-PER-01222",
+      "score": 109.0,
+      "reasons": [
+        "场景精召回:银行汇票:32",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第五十四条第二款",
+      "rule_type": "PER_AUTH",
+      "who": "持票人/收款人",
+      "where": "银行汇票流通与兑付环节",
+      "what": "银行汇票",
+      "how": "可用于转账；填明‘现金’字样的，还可支取现金",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-PRO-01249",
+      "score": 109.0,
+      "reasons": [
+        "场景精召回:银行汇票:32",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十二条",
+      "rule_type": "PRO_FORBIDDEN",
+      "who": "任何主体（含持票人、银行、背书人等）",
+      "where": "银行汇票票面记载",
+      "what": "实际结算金额",
+      "how": "不得更改",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-VAL-01229",
+      "score": 109.0,
+      "reasons": [
+        "场景精召回:银行汇票:32",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第五十七条",
+      "rule_type": "VAL_THRESHOLD",
+      "who": "持票人",
+      "where": "向代理付款人提示付款时",
+      "what": "银行汇票的提示付款期限",
+      "how": "不得超过1个月（精确时限）",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01180",
+      "score": 107.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第三十六条第三句（银行汇票/本票部分）",
+      "rule_type": "OBL_ONGOING",
+      "who": "银行汇票、银行本票持票人",
+      "where": "票据权利主张过程中",
+      "what": "对出票人以外的前手的追索权",
+      "how": "丧失",
+      "is_ambiguous": true,
+      "review_reason": "AMBIGUOUS_TEXT",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-BAM-OBL-01908",
+      "score": 97.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "人民币银行结算账户管理办法实施细则",
+      "article_reference": "第二十九条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "个人持票人",
+      "where": "开户银行柜面/系统受理环节",
+      "what": "支票、银行汇票或银行本票（出票人/申请人为单位，且一手或多手背书人为单位）",
+      "how": "须向开户银行出具最后一手背书人为单位、被背书人为个人的收款依据",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-BAM-OBL-00544",
+      "score": 79.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "人民币银行结算账户管理办法",
+      "article_reference": "第四十一条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "个人",
+      "where": "银行柜面/账户系统",
+      "what": "本办法第四十条规定的有关收款依据",
+      "how": "应出具",
+      "is_ambiguous": true,
+      "review_reason": "AMBIGUOUS_TEXT",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-BAM-OBL-00775",
+      "score": 79.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于规范人民币银行结算账户管理有关问题的通知（银发〔2006〕71号）",
+      "article_reference": "（二）付款依据的审核 2.",
+      "rule_type": "OBL_MANDATORY",
+      "who": "银行",
+      "where": "开户银行或代理付款行",
+      "what": "未经背书转让的银行汇票/本票",
+      "how": "应审核申请人是否为单位、收款人是否为个人，并确认未背书转让",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-NIL-DEF-00159",
+      "score": 79.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第十九条第二款",
+      "rule_type": "DEF_SCOPE",
+      "who": "立法主体",
+      "where": "票据类型体系",
+      "what": "汇票",
+      "how": "分为银行汇票和商业汇票",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    }
+  ],
+  "rounds": [],
+  "final_decision": "DRY_RUN",
+  "stop_reason": "dry_run",
+  "final_recall_atom_count": 28,
+  "final_atom_ids": [
+    "YZ-PSM-PER-01261",
+    "YZ-PSM-OBL-01259",
+    "YZ-PSM-OBL-01262",
+    "YZ-PSM-OBL-01270",
+    "YZ-PSM-PER-01222",
+    "YZ-PSM-PRO-01249",
+    "YZ-PSM-VAL-01229",
+    "YZ-PSM-OBL-01180",
+    "YZ-BAM-OBL-01908",
+    "YZ-BAM-OBL-00544",
+    "YZ-BAM-OBL-00775",
+    "YZ-NIL-DEF-00159",
+    "YZ-NIL-OBL-00234",
+    "YZ-NIL-DEF-00204",
+    "YZ-NIL-EVT-00242",
+    "YZ-NIL-EVT-00243",
+    "YZ-NIL-EVT-00244",
+    "YZ-NIL-EVT-00245",
+    "YZ-NIL-EVT-00246",
+    "YZ-PSM-OBL-00050",
+    "YZ-PSM-OBL-00052",
+    "YZ-PSM-OBL-00053",
+    "YZ-PSM-OBL-00054",
+    "YZ-PSM-OBL-00055",
+    "YZ-PSM-OBL-00058",
+    "YZ-PSM-OBL-00059",
+    "YZ-PSM-OBL-01738",
+    "YZ-PSM-PRO-00049"
+  ],
+  "final_ranked_evidence": [
+    {
+      "atom_id": "YZ-PSM-PER-01261",
+      "score": 115.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:未在银行开立存款账户的个人持票人/银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十七条第一句",
+      "rule_type": "PER_AUTH",
+      "who": "未在银行开立存款账户的个人持票人",
+      "where": "任意一家银行机构（不限于出票行或代理行）",
+      "what": "银行汇票",
+      "how": "可向选择的任何一家银行机构提示付款",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01259",
+      "score": 112.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十六条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "在银行开立存款账户的持票人",
+      "where": "开户银行柜台/电子渠道",
+      "what": "银行汇票、解讫通知、进账单及汇票背面签章",
+      "how": "在‘持票人向银行提示付款签章’处签章，且签章须与预留银行签章一致，并送交全部材料",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 一、账户管理 > 账户变更"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01262",
+      "score": 112.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十七条第二句",
+      "rule_type": "OBL_MANDATORY",
+      "who": "未在银行开立存款账户的个人持票人",
+      "where": "银行柜台",
+      "what": "银行汇票背面签章、本人身份证件名称/号码/发证机关信息",
+      "how": "在汇票背面‘持票人向银行提示付款签章’处签章，并填明本人身份证件名称、号码及发证机关",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 信息补录"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01270",
+      "score": 110.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十九条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "持票人",
+      "where": "向出票银行请求付款场景",
+      "what": "本人身份证件或单位证明、银行汇票及解讫通知",
+      "how": "作出说明并提交材料",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-PER-01222",
+      "score": 109.0,
+      "reasons": [
+        "场景精召回:银行汇票:32",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第五十四条第二款",
+      "rule_type": "PER_AUTH",
+      "who": "持票人/收款人",
+      "where": "银行汇票流通与兑付环节",
+      "what": "银行汇票",
+      "how": "可用于转账；填明‘现金’字样的，还可支取现金",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-PRO-01249",
+      "score": 109.0,
+      "reasons": [
+        "场景精召回:银行汇票:32",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十二条",
+      "rule_type": "PRO_FORBIDDEN",
+      "who": "任何主体（含持票人、银行、背书人等）",
+      "where": "银行汇票票面记载",
+      "what": "实际结算金额",
+      "how": "不得更改",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-VAL-01229",
+      "score": 109.0,
+      "reasons": [
+        "场景精召回:银行汇票:32",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第五十七条",
+      "rule_type": "VAL_THRESHOLD",
+      "who": "持票人",
+      "where": "向代理付款人提示付款时",
+      "what": "银行汇票的提示付款期限",
+      "how": "不得超过1个月（精确时限）",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01180",
+      "score": 107.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第三十六条第三句（银行汇票/本票部分）",
+      "rule_type": "OBL_ONGOING",
+      "who": "银行汇票、银行本票持票人",
+      "where": "票据权利主张过程中",
+      "what": "对出票人以外的前手的追索权",
+      "how": "丧失",
+      "is_ambiguous": true,
+      "review_reason": "AMBIGUOUS_TEXT",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-BAM-OBL-01908",
+      "score": 97.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "人民币银行结算账户管理办法实施细则",
+      "article_reference": "第二十九条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "个人持票人",
+      "where": "开户银行柜面/系统受理环节",
+      "what": "支票、银行汇票或银行本票（出票人/申请人为单位，且一手或多手背书人为单位）",
+      "how": "须向开户银行出具最后一手背书人为单位、被背书人为个人的收款依据",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-BAM-OBL-00544",
+      "score": 79.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "人民币银行结算账户管理办法",
+      "article_reference": "第四十一条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "个人",
+      "where": "银行柜面/账户系统",
+      "what": "本办法第四十条规定的有关收款依据",
+      "how": "应出具",
+      "is_ambiguous": true,
+      "review_reason": "AMBIGUOUS_TEXT",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-BAM-OBL-00775",
+      "score": 79.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于规范人民币银行结算账户管理有关问题的通知（银发〔2006〕71号）",
+      "article_reference": "（二）付款依据的审核 2.",
+      "rule_type": "OBL_MANDATORY",
+      "who": "银行",
+      "where": "开户银行或代理付款行",
+      "what": "未经背书转让的银行汇票/本票",
+      "how": "应审核申请人是否为单位、收款人是否为个人，并确认未背书转让",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-NIL-DEF-00159",
+      "score": 79.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第十九条第二款",
+      "rule_type": "DEF_SCOPE",
+      "who": "立法主体",
+      "where": "票据类型体系",
+      "what": "汇票",
+      "how": "分为银行汇票和商业汇票",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-NIL-OBL-00234",
+      "score": 45.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:持票人/票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第五十六条第一句",
+      "rule_type": "OBL_ONGOING",
+      "who": "持票人委托的收款银行",
+      "where": "银行票据结算操作环节",
+      "what": "汇票金额",
+      "how": "仅限于按照汇票上记载事项转入持票人账户",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-NIL-DEF-00204",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第三十九条",
+      "rule_type": "DEF_SCOPE",
+      "who": "持票人",
+      "where": "票据行为语境中",
+      "what": "提示承兑",
+      "how": "向付款人出示汇票，并要求付款人承诺付款",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-NIL-EVT-00242",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第六十一条第一句",
+      "rule_type": "EVT_TRIGGER",
+      "who": "持票人",
+      "where": "票据权利行使阶段",
+      "what": "对背书人、出票人及其他债务人的追索权",
+      "how": "可以行使",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 可疑分析"
+      ]
+    },
+    {
+      "atom_id": "YZ-NIL-EVT-00243",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第六十一条第二句",
+      "rule_type": "EVT_TRIGGER",
+      "who": "持票人",
+      "where": "票据未到期但基础偿付能力/意愿已丧失",
+      "what": "对背书人、出票人及其他债务人的追索权",
+      "how": "也可以行使",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 可疑分析"
+      ]
+    },
+    {
+      "atom_id": "YZ-NIL-EVT-00244",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第六十一条第（一）项",
+      "rule_type": "EVT_TRIGGER",
+      "who": "持票人",
+      "where": "承兑环节",
+      "what": "追索权",
+      "how": "触发（可行使）",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-NIL-EVT-00245",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第六十一条第（二）项",
+      "rule_type": "EVT_TRIGGER",
+      "who": "持票人",
+      "where": "票据债务人主体资格存续异常",
+      "what": "追索权",
+      "how": "触发（可行使）",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 五、公司授信业务 > 押品管理"
+      ]
+    },
+    {
+      "atom_id": "YZ-NIL-EVT-00246",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第六十一条第（三）项",
+      "rule_type": "EVT_TRIGGER",
+      "who": "持票人",
+      "where": "司法程序或行政监管场景",
+      "what": "追索权",
+      "how": "触发（可行使）",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 五、公司授信业务 > 用信管理"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-00050",
+      "score": 14.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于加强支付结算管理防范电信网络新型违法犯罪有关事项的通知（银发〔2016〕261号）",
+      "article_reference": "第二部分·第一条（中段）",
+      "rule_type": "OBL_MANDATORY",
+      "who": "银行和支付机构",
+      "where": "全部实体特约商户经营场所",
+      "what": "受理终端实际使用地点",
+      "how": "必须进行现场检查并逐一核对",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-00052",
+      "score": 14.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于加强支付结算管理防范电信网络新型违法犯罪有关事项的通知（银发〔2016〕261号）",
+      "article_reference": "第二部分·第二条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "中国支付清算协会、银行卡清算机构",
+      "where": "行业级信息系统",
+      "what": "特约商户信息管理系统及黑名单机制",
+      "how": "应当建立健全",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 可疑分析"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-00053",
+      "score": 14.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于加强支付结算管理防范电信网络新型违法犯罪有关事项的通知（银发〔2016〕261号）",
+      "article_reference": "第二部分·第二条（末句）",
+      "rule_type": "OBL_ONGOING",
+      "who": "银行和支付机构",
+      "where": "商户准入与持续监测环节",
+      "what": "反复更换服务机构的特约商户",
+      "how": "应当审慎为其提供服务",
+      "is_ambiguous": true,
+      "review_reason": "AMBIGUOUS_TEXT",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 可疑分析"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-00054",
+      "score": 14.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于加强支付结算管理防范电信网络新型违法犯罪有关事项的通知（银发〔2016〕261号）",
+      "article_reference": "第一部分（黑名单管理）",
+      "rule_type": "OBL_MANDATORY",
+      "who": "中国支付清算协会、银行卡清算机构",
+      "where": "特约商户风险管理机制建设",
+      "what": "特约商户黑名单管理机制",
+      "how": "建立健全",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 可疑分析"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-00055",
+      "score": 14.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于加强支付结算管理防范电信网络新型违法犯罪有关事项的通知（银发〔2016〕261号）",
+      "article_reference": "第一部分（黑名单管理）",
+      "rule_type": "OBL_MANDATORY",
+      "who": "中国支付清算协会、银行卡清算机构",
+      "where": "黑名单录入环节",
+      "what": "因重大违规被终止服务的特约商户及其法定代表人/负责人、公安机关认定为转移赃款提供便利的特约商户及相关个人、买卖账户的单位和个人",
+      "how": "列入黑名单管理",
+      "is_ambiguous": true,
+      "review_reason": "AMBIGUOUS_TEXT",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 可疑分析"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-00058",
+      "score": 14.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于加强支付结算管理防范电信网络新型违法犯罪有关事项的通知（银发〔2016〕261号）",
+      "article_reference": "第一部分（黑名单管理）",
+      "rule_type": "OBL_MANDATORY",
+      "who": "银行和支付机构",
+      "where": "已拓展的存量特约商户管理",
+      "what": "已拓展为特约商户的黑名单关联单位",
+      "how": "予以清退",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-00059",
+      "score": 14.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于加强支付结算管理防范电信网络新型违法犯罪有关事项的通知（银发〔2016〕261号）",
+      "article_reference": "第四部分·一（交易信息要求）",
+      "rule_type": "OBL_MANDATORY",
+      "who": "支付机构与银行",
+      "where": "跨机构合作支付场景",
+      "what": "交易信息",
+      "how": "确保真实性、完整性、可追溯性及全流程一致性",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 可疑分析"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01738",
+      "score": 14.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "支付结算办法（附一）",
+      "article_reference": "附一：正确填写票据和结算凭证的基本规定",
+      "rule_type": "OBL_MANDATORY",
+      "who": "银行、单位、个人",
+      "where": "办理支付结算和现金收付全过程",
+      "what": "票据和结算凭证",
+      "how": "必须做到标准化、规范化；要素齐全、数字正确、字迹清晰、不错漏、不潦草，防止涂改",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 二、支付结算 > 同城票交"
+      ]
+    },
+    {
+      "atom_id": "YZ-PSM-PRO-00049",
+      "score": 14.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于加强支付结算管理防范电信网络新型违法犯罪有关事项的通知（银发〔2016〕261号）",
+      "article_reference": "第二部分·第一条",
+      "rule_type": "PRO_FORBIDDEN",
+      "who": "任何单位和个人",
+      "where": "互联网平台及线下交易场景",
+      "what": "POS机（含MPOS）、刷卡器等受理终端",
+      "how": "不得在网上买卖",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ]
+    }
+  ],
+  "final_evidence": [
+    {
+      "atom_id": "YZ-PSM-PER-01261",
+      "score": 115.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:未在银行开立存款账户的个人持票人/银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十七条第一句",
+      "rule_type": "PER_AUTH",
+      "who": "未在银行开立存款账户的个人持票人",
+      "where": "任意一家银行机构（不限于出票行或代理行）",
+      "what": "银行汇票",
+      "how": "可向选择的任何一家银行机构提示付款",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "未在银行开立存款账户的个人持票人，可以向选择的任何一家银行机构提示付款。"
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01259",
+      "score": 112.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十六条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "在银行开立存款账户的持票人",
+      "where": "开户银行柜台/电子渠道",
+      "what": "银行汇票、解讫通知、进账单及汇票背面签章",
+      "how": "在‘持票人向银行提示付款签章’处签章，且签章须与预留银行签章一致，并送交全部材料",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 一、账户管理 > 账户变更"
+      ],
+      "content_original": "在银行开立存款账户的持票人向开户银行提示付款时，应在汇票背面“持票人向银行提示付款签章”处签章，签章须与预留银行签章相同，并将银行汇票和解讫通知、进账单送交开户银行。"
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01262",
+      "score": 112.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十七条第二句",
+      "rule_type": "OBL_MANDATORY",
+      "who": "未在银行开立存款账户的个人持票人",
+      "where": "银行柜台",
+      "what": "银行汇票背面签章、本人身份证件名称/号码/发证机关信息",
+      "how": "在汇票背面‘持票人向银行提示付款签章’处签章，并填明本人身份证件名称、号码及发证机关",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 信息补录"
+      ],
+      "content_original": "提示付款时，应在汇票背面“持票人向银行提示付款签章”处签章，并填明本人身份证件名称、号码及发证机关，由其本人向银行提交身份证件及其复印件。"
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01270",
+      "score": 110.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十九条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "持票人",
+      "where": "向出票银行请求付款场景",
+      "what": "本人身份证件或单位证明、银行汇票及解讫通知",
+      "how": "作出说明并提交材料",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "第六十九条 持票人超过期限向代理付款银行提示付款不获付款的，须在票据权利时效内向出票银行作出说明，并提供本人身份证件或单位证明，持银行汇票和解讫通知向出票银行请求付款。"
+    },
+    {
+      "atom_id": "YZ-PSM-PER-01222",
+      "score": 109.0,
+      "reasons": [
+        "场景精召回:银行汇票:32",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第五十四条第二款",
+      "rule_type": "PER_AUTH",
+      "who": "持票人/收款人",
+      "where": "银行汇票流通与兑付环节",
+      "what": "银行汇票",
+      "how": "可用于转账；填明‘现金’字样的，还可支取现金",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "银行汇票可以用于转账，填明“现金”字样的银行汇票也可以用于支取现金。"
+    },
+    {
+      "atom_id": "YZ-PSM-PRO-01249",
+      "score": 109.0,
+      "reasons": [
+        "场景精召回:银行汇票:32",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第六十二条",
+      "rule_type": "PRO_FORBIDDEN",
+      "who": "任何主体（含持票人、银行、背书人等）",
+      "where": "银行汇票票面记载",
+      "what": "实际结算金额",
+      "how": "不得更改",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "银行汇票的实际结算金额不得更改，更改实际结算金额的银行汇票无效。"
+    },
+    {
+      "atom_id": "YZ-PSM-VAL-01229",
+      "score": 109.0,
+      "reasons": [
+        "场景精召回:银行汇票:32",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第五十七条",
+      "rule_type": "VAL_THRESHOLD",
+      "who": "持票人",
+      "where": "向代理付款人提示付款时",
+      "what": "银行汇票的提示付款期限",
+      "how": "不得超过1个月（精确时限）",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "第五十七条 银行汇票的提示付款期限自出票日起1个月。"
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-01180",
+      "score": 107.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:银行汇票/持票人",
+        "主体细筛:持票人"
+      ],
+      "source_document": "支付结算办法",
+      "article_reference": "第三十六条第三句（银行汇票/本票部分）",
+      "rule_type": "OBL_ONGOING",
+      "who": "银行汇票、银行本票持票人",
+      "where": "票据权利主张过程中",
+      "what": "对出票人以外的前手的追索权",
+      "how": "丧失",
+      "is_ambiguous": true,
+      "review_reason": "AMBIGUOUS_TEXT",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "银行汇票、银行本票的持票人超过规定期限提示付款的，丧失对出票人以外的前手的追索权，"
+    },
+    {
+      "atom_id": "YZ-BAM-OBL-01908",
+      "score": 97.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "人民币银行结算账户管理办法实施细则",
+      "article_reference": "第二十九条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "个人持票人",
+      "where": "开户银行柜面/系统受理环节",
+      "what": "支票、银行汇票或银行本票（出票人/申请人为单位，且一手或多手背书人为单位）",
+      "how": "须向开户银行出具最后一手背书人为单位、被背书人为个人的收款依据",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "第二十九条 个人持出票人（或申请人）为单位且一手或多手背书人为单位的支票、银行汇票或银行本票，向开户银行提示付款并将款项转入其个人银行结算账户的，应按照《办法》第四十一条和本实施细则第二十八条的规定，向开户银行出具最后一手背书人为单位且被背书人为个人的收款依据。"
+    },
+    {
+      "atom_id": "YZ-BAM-OBL-00544",
+      "score": 79.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "人民币银行结算账户管理办法",
+      "article_reference": "第四十一条",
+      "rule_type": "OBL_MANDATORY",
+      "who": "个人",
+      "where": "银行柜面/账户系统",
+      "what": "本办法第四十条规定的有关收款依据",
+      "how": "应出具",
+      "is_ambiguous": true,
+      "review_reason": "AMBIGUOUS_TEXT",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "第四十一条有下列情形之一的，个人应出具本办法第四十条规定的有关收款依据。个人持出票人为单位的支票向开户银行委托收款，将款项转入其个人银行结算账户的。个人持申请人为单位的银行汇票和银行本票向开户银行提示付款，将款项转入其个人银行结算账户的。"
+    },
+    {
+      "atom_id": "YZ-BAM-OBL-00775",
+      "score": 79.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于规范人民币银行结算账户管理有关问题的通知（银发〔2006〕71号）",
+      "article_reference": "（二）付款依据的审核 2.",
+      "rule_type": "OBL_MANDATORY",
+      "who": "银行",
+      "where": "开户银行或代理付款行",
+      "what": "未经背书转让的银行汇票/本票",
+      "how": "应审核申请人是否为单位、收款人是否为个人，并确认未背书转让",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "个人持申请人为单位、收款人为个人且未经背书转让的银行汇票/本票"
+    },
+    {
+      "atom_id": "YZ-NIL-DEF-00159",
+      "score": 79.0,
+      "reasons": [
+        "场景精召回:银行汇票:20",
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第十九条第二款",
+      "rule_type": "DEF_SCOPE",
+      "who": "立法主体",
+      "where": "票据类型体系",
+      "what": "汇票",
+      "how": "分为银行汇票和商业汇票",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "汇票分为银行汇票和商业汇票。"
+    },
+    {
+      "atom_id": "YZ-NIL-OBL-00234",
+      "score": 45.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "语义命中:持票人/票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第五十六条第一句",
+      "rule_type": "OBL_ONGOING",
+      "who": "持票人委托的收款银行",
+      "where": "银行票据结算操作环节",
+      "what": "汇票金额",
+      "how": "仅限于按照汇票上记载事项转入持票人账户",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "持票人委托的收款银行的责任，限于按照汇票上记载事项将汇票金额转入持票人账户。"
+    },
+    {
+      "atom_id": "YZ-NIL-DEF-00204",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第三十九条",
+      "rule_type": "DEF_SCOPE",
+      "who": "持票人",
+      "where": "票据行为语境中",
+      "what": "提示承兑",
+      "how": "向付款人出示汇票，并要求付款人承诺付款",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "提示承兑是指持票人向付款人出示汇票，并要求付款人承诺付款的行为。"
+    },
+    {
+      "atom_id": "YZ-NIL-EVT-00242",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第六十一条第一句",
+      "rule_type": "EVT_TRIGGER",
+      "who": "持票人",
+      "where": "票据权利行使阶段",
+      "what": "对背书人、出票人及其他债务人的追索权",
+      "how": "可以行使",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 可疑分析"
+      ],
+      "content_original": "汇票到期被拒绝付款的，持票人可以对背书人、出票人以及汇票的其他债务人行使追索权。"
+    },
+    {
+      "atom_id": "YZ-NIL-EVT-00243",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第六十一条第二句",
+      "rule_type": "EVT_TRIGGER",
+      "who": "持票人",
+      "where": "票据未到期但基础偿付能力/意愿已丧失",
+      "what": "对背书人、出票人及其他债务人的追索权",
+      "how": "也可以行使",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 七、反洗钱 > 可疑分析"
+      ],
+      "content_original": "汇票到期日前，有下列情形之一的，持票人也可以行使追索权："
+    },
+    {
+      "atom_id": "YZ-NIL-EVT-00244",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第六十一条第（一）项",
+      "rule_type": "EVT_TRIGGER",
+      "who": "持票人",
+      "where": "承兑环节",
+      "what": "追索权",
+      "how": "触发（可行使）",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "（一）汇票被拒绝承兑的；"
+    },
+    {
+      "atom_id": "YZ-NIL-EVT-00245",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第六十一条第（二）项",
+      "rule_type": "EVT_TRIGGER",
+      "who": "持票人",
+      "where": "票据债务人主体资格存续异常",
+      "what": "追索权",
+      "how": "触发（可行使）",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 五、公司授信业务 > 押品管理"
+      ],
+      "content_original": "（二）承兑人或者付款人死亡、逃匿的；"
+    },
+    {
+      "atom_id": "YZ-NIL-EVT-00246",
+      "score": 32.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算",
+        "主体细筛:持票人"
+      ],
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第六十一条第（三）项",
+      "rule_type": "EVT_TRIGGER",
+      "who": "持票人",
+      "where": "司法程序或行政监管场景",
+      "what": "追索权",
+      "how": "触发（可行使）",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算",
+        "业务管理类 > 五、公司授信业务 > 用信管理"
+      ],
+      "content_original": "（三）承兑人或者付款人被依法宣告破产的或者因违法被责令终止业务活动的。"
+    },
+    {
+      "atom_id": "YZ-PSM-OBL-00050",
+      "score": 14.0,
+      "reasons": [
+        "业务模块宽召回:业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "source_document": "中国人民银行关于加强支付结算管理防范电信网络新型违法犯罪有关事项的通知（银发〔2016〕261号）",
+      "article_reference": "第二部分·第一条（中段）",
+      "rule_type": "OBL_MANDATORY",
+      "who": "银行和支付机构",
+      "where": "全部实体特约商户经营场所",
+      "what": "受理终端实际使用地点",
+      "how": "必须进行现场检查并逐一核对",
+      "is_ambiguous": false,
+      "review_reason": "NONE",
+      "business_paths": [
+        "业务管理类 > 二、支付结算 > 票据结算"
+      ],
+      "content_original": "银行和支付机构应当对全部实体特约商户进行现场检查，逐一核对其受理终端的使用地点。"
+    }
+  ],
+  "compliance_summary": {
+    "readiness": "dry_run",
+    "headline": "当前只完成了本地召回摘要，尚未进入闭环合规判断",
+    "next_step": "继续运行闭环召回，让模型判断证据是否足以支撑最终合规结论。",
+    "route_hint": "银行汇票",
+    "recommended_directions": [],
+    "missing_items": [],
+    "gap_diagnosis": [],
+    "gap_summary_cards": [
+      {
+        "card_key": "fatal_gaps",
+        "card_title": "致命缺口总卡",
+        "card_status": "无缺口",
+        "blocking_level": "整案阻断",
+        "count": 0,
+        "summary": "当前未识别到会直接阻断整案最终结论的缺口。",
+        "decision_hint": "优先继续补召回；若候选已耗尽，应补充法规语料或人工补证。",
+        "gap_types": [],
+        "items": []
+      },
+      {
+        "card_key": "reviewable_gaps",
+        "card_title": "可人工复核缺口总卡",
+        "card_status": "无缺口",
+        "blocking_level": "子结论阻断",
+        "count": 0,
+        "summary": "当前未识别到需要转人工复核的子结论阻断缺口。",
+        "decision_hint": "优先继续补召回；若候选已耗尽，可转人工复核并输出阶段性判断。",
+        "gap_types": [],
+        "items": []
+      },
+      {
+        "card_key": "risk_notice_gaps",
+        "card_title": "仅风险提示总卡",
+        "card_status": "无缺口",
+        "blocking_level": "风险提示",
+        "count": 0,
+        "summary": "当前未识别到仅需保留为风险提示的缺口。",
+        "decision_hint": "保留为风险提示，纳入人工审核清单即可。",
+        "gap_types": [],
+        "items": []
+      }
+    ],
+    "risk_points": [
+      "本次尚未进入 LLM 闭环判断，当前结果仅用于查看召回覆盖面，不应直接下最终合规结论。",
+      "最终证据中仍有 2 条原子知识带有歧义/复核标记，需要人工再看。",
+      "已命中限制性/禁止性规则，输出最终结论前需要优先核查是否存在例外条款或授权条款。"
+    ],
+    "key_basis": [
+      "《支付结算办法》第六十七条第一句：可向选择的任何一家银行机构提示付款",
+      "《支付结算办法》第六十六条：在‘持票人向银行提示付款签章’处签章，且签章须与预留银行签章一致，并送交全部材料",
+      "《支付结算办法》第六十七条第二句：在汇票背面‘持票人向银行提示付款签章’处签章，并填明本人身份证件名称、号码及发证机关",
+      "《支付结算办法》第六十九条：作出说明并提交材料",
+      "《支付结算办法》第三十六条第三句（银行汇票/本票部分）：丧失",
+      "《支付结算办法》第五十四条第二款：可用于转账；填明‘现金’字样的，还可支取现金"
+    ],
+    "required_materials": [
+      "《支付结算办法》第六十六条：在‘持票人向银行提示付款签章’处签章，且签章须与预留银行签章一致，并送交全部材料",
+      "《支付结算办法》第六十七条第二句：在汇票背面‘持票人向银行提示付款签章’处签章，并填明本人身份证件名称、号码及发证机关",
+      "《支付结算办法》第六十九条：作出说明并提交材料",
+      "《人民币银行结算账户管理办法实施细则》第二十九条：须向开户银行出具最后一手背书人为单位、被背书人为个人的收款依据",
+      "《中国人民银行关于规范人民币银行结算账户管理有关问题的通知（银发〔2006〕71号）》（二）付款依据的审核 2.：应审核申请人是否为单位、收款人是否为个人，并确认未背书转让"
+    ],
+    "required_actions": [
+      "《支付结算办法》第六十六条：在‘持票人向银行提示付款签章’处签章，且签章须与预留银行签章一致，并送交全部材料",
+      "《支付结算办法》第六十七条第二句：在汇票背面‘持票人向银行提示付款签章’处签章，并填明本人身份证件名称、号码及发证机关",
+      "《支付结算办法》第六十九条：作出说明并提交材料",
+      "《支付结算办法》第三十六条第三句（银行汇票/本票部分）：丧失",
+      "《人民币银行结算账户管理办法实施细则》第二十九条：须向开户银行出具最后一手背书人为单位、被背书人为个人的收款依据"
+    ],
+    "prohibitions": [
+      "《支付结算办法》第六十二条：不得更改",
+      "《支付结算办法》第五十七条：不得超过1个月（精确时限）"
+    ],
+    "exceptions": [
+      "《支付结算办法》第六十七条第一句：可向选择的任何一家银行机构提示付款",
+      "《支付结算办法》第五十四条第二款：可用于转账；填明‘现金’字样的，还可支取现金"
+    ],
+    "time_limits": [
+      "《支付结算办法》第六十九条：作出说明并提交材料",
+      "《支付结算办法》第三十六条第三句（银行汇票/本票部分）：丧失",
+      "《支付结算办法》第五十七条：不得超过1个月（精确时限）"
+    ],
+    "definitions": [
+      "《中华人民共和国票据法》第十九条第二款：分为银行汇票和商业汇票"
+    ]
+  },
+  "final_conclusion": {
+    "status": "not_ready",
+    "generation_mode": "local_not_ready",
+    "ready_for_final_judgement": false,
+    "conclusion": "证据不足待补召回",
+    "conclusion_summary": "当前仅完成本地召回摘要，尚未进入完整闭环判断，因此不能直接给出最终合规结论。",
+    "confidence": 0.25,
+    "legal_basis": [
+      "《支付结算办法》第六十七条第一句：可向选择的任何一家银行机构提示付款",
+      "《支付结算办法》第六十六条：在‘持票人向银行提示付款签章’处签章，且签章须与预留银行签章一致，并送交全部材料",
+      "《支付结算办法》第六十七条第二句：在汇票背面‘持票人向银行提示付款签章’处签章，并填明本人身份证件名称、号码及发证机关",
+      "《支付结算办法》第六十九条：作出说明并提交材料",
+      "《支付结算办法》第三十六条第三句（银行汇票/本票部分）：丧失",
+      "《支付结算办法》第五十四条第二款：可用于转账；填明‘现金’字样的，还可支取现金"
+    ],
+    "required_materials": [
+      "《支付结算办法》第六十六条：在‘持票人向银行提示付款签章’处签章，且签章须与预留银行签章一致，并送交全部材料",
+      "《支付结算办法》第六十七条第二句：在汇票背面‘持票人向银行提示付款签章’处签章，并填明本人身份证件名称、号码及发证机关",
+      "《支付结算办法》第六十九条：作出说明并提交材料",
+      "《人民币银行结算账户管理办法实施细则》第二十九条：须向开户银行出具最后一手背书人为单位、被背书人为个人的收款依据",
+      "《中国人民银行关于规范人民币银行结算账户管理有关问题的通知（银发〔2006〕71号）》（二）付款依据的审核 2.：应审核申请人是否为单位、收款人是否为个人，并确认未背书转让"
+    ],
+    "required_actions": [
+      "《支付结算办法》第六十六条：在‘持票人向银行提示付款签章’处签章，且签章须与预留银行签章一致，并送交全部材料",
+      "《支付结算办法》第六十七条第二句：在汇票背面‘持票人向银行提示付款签章’处签章，并填明本人身份证件名称、号码及发证机关",
+      "《支付结算办法》第六十九条：作出说明并提交材料",
+      "《支付结算办法》第三十六条第三句（银行汇票/本票部分）：丧失",
+      "《人民币银行结算账户管理办法实施细则》第二十九条：须向开户银行出具最后一手背书人为单位、被背书人为个人的收款依据"
+    ],
+    "exceptions_and_limits": [
+      "《支付结算办法》第六十二条：不得更改",
+      "《支付结算办法》第五十七条：不得超过1个月（精确时限）",
+      "《支付结算办法》第六十七条第一句：可向选择的任何一家银行机构提示付款",
+      "《支付结算办法》第五十四条第二款：可用于转账；填明‘现金’字样的，还可支取现金",
+      "《支付结算办法》第六十九条：作出说明并提交材料",
+      "《支付结算办法》第三十六条第三句（银行汇票/本票部分）：丧失"
+    ],
+    "missing_items": [],
+    "risk_points": [
+      "本次尚未进入 LLM 闭环判断，当前结果仅用于查看召回覆盖面，不应直接下最终合规结论。",
+      "最终证据中仍有 2 条原子知识带有歧义/复核标记，需要人工再看。",
+      "已命中限制性/禁止性规则，输出最终结论前需要优先核查是否存在例外条款或授权条款。"
+    ],
+    "follow_up_actions": [
+      "继续运行闭环召回，让模型判断证据是否足以支撑最终合规结论。"
+    ],
+    "error": ""
+  }
+}

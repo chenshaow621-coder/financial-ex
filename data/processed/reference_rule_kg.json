@@ -1,0 +1,976 @@
+{
+  "nodes": [
+    {
+      "type": "ReferenceRule",
+      "id": "REF-001",
+      "name": "转账支票正面出票日期与核心日期(集中作业报文上送)比较小于等于10日为通过",
+      "check_type": "ISSUE_DATE_WITHIN_10_DAYS",
+      "entities": "[\"转账支票\", \"支票\", \"票据\", \"出票日期\", \"核心日期\", \"提示付款\", \"出票人\", \"持票人\", \"付款人\", \"中国人民银行\"]"
+    },
+    {
+      "type": "ReferenceRule",
+      "id": "REF-002",
+      "name": "转账支票正面的出票日期校验是否合规\n规则：壹月贰月前零字必写，叁月至玖月前零字可写可不写。拾月至拾贰月必须写成壹拾月、壹拾壹月、壹拾贰月(前面多写了“零”字也认可，如零壹拾月)。 壹日至玖日前零字必写，拾日至拾玖日必须写成壹拾日及壹拾x日(前面多写了“零”字也认可，如零壹拾伍日，下同)，贰拾日至贰拾玖日必须写成贰拾日及贰拾x日，叁拾日至叁拾壹日必须写成叁拾日及叁拾壹日。",
+      "check_type": "ISSUE_DATE_IN_CHINESE_UPPERCASE",
+      "entities": "[\"转账支票\", \"支票\", \"票据\", \"出票日期\", \"金额\", \"签章\", \"出票人\", \"付款人\"]"
+    },
+    {
+      "type": "ReferenceRule",
+      "id": "REF-003",
+      "name": "转账支票正面的小写金额需要有单位符号，且需要为￥符号",
+      "check_type": "LOWER_AMOUNT_HAS_RMB_SYMBOL",
+      "entities": "[\"转账支票\", \"支票\", \"小写金额\", \"金额\"]"
+    },
+    {
+      "type": "ReferenceRule",
+      "id": "REF-004",
+      "name": "支票大写金额=支票小写金额",
+      "check_type": "UPPER_AMOUNT_EQUALS_LOWER_AMOUNT",
+      "entities": "[\"支票\", \"票据\", \"小写金额\", \"大写金额\", \"金额\"]"
+    },
+    {
+      "type": "ReferenceRule",
+      "id": "REF-005",
+      "name": "支票金额不能为空",
+      "check_type": "AMOUNT_IS_REQUIRED",
+      "entities": "[\"支票\", \"出票日期\", \"金额\", \"签章\", \"出票人\", \"付款人\"]"
+    },
+    {
+      "type": "ReferenceRule",
+      "id": "REF-006",
+      "name": "转账支票大写金额规范性：1.中文大写金额数字到“元”为止的，在“元”之后，应写“整”（或“正”）字，在“角”之后可以不写“整”（或“正”）字。大写金额数字有“分”的，“分”后面不写“整”（或“正”）字。2.识别“正”=“整”，“元”=“圆”。3.阿拉伯数字中间有“O”时，中文大写金额要写“零”字。阿拉伯数字中间连续有几个“0”时，中文大写金额中间可以只写一个“零”字。阿拉伯金额数字万位或元位是“0”，或者数字中间连续有几个“0”，万位、元位也是“0’，但千位、角位不是“0”时，中文大写金额中可以只写一个零字，也可以不写“零”字。阿拉伯金额数字角位是“0”，而分位不是“0”时，中文大写金额“元”后面应写“零”字。",
+      "check_type": "UPPER_AMOUNT_FORMAT_IS_VALID",
+      "entities": "[\"转账支票\", \"支票\", \"票据\", \"小写金额\", \"大写金额\", \"金额\"]"
+    },
+    {
+      "type": "ReferenceRule",
+      "id": "REF-007",
+      "name": "转账支票签章是否完整，有财务专用章及个人章",
+      "check_type": "SIGNATURE_SET_IS_COMPLETE",
+      "entities": "[\"转账支票\", \"支票\", \"票据\", \"出票日期\", \"金额\", \"签章\", \"财务专用章\", \"个人章\", \"出票人\", \"持票人\", \"付款人\"]"
+    },
+    {
+      "type": "Document",
+      "id": "DOC:中华人民共和国票据法",
+      "name": "中华人民共和国票据法"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "中华人民共和国票据法:第九十二条:BLOCK",
+      "ref": "第九十二条",
+      "segment_type": "article_block",
+      "text": "第九十二条 支票的持票人应当自出票日起１０日内提示付款；异地使用的支票，其提示付款的期限由中国人民银行另行规定。\n超过提示付款期限的，付款人可以不予付款；付款人不予付款的，出票人仍应当对持票人承担票据责任。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "中华人民共和国票据法:第八十五条:BLOCK",
+      "ref": "第八十五条",
+      "segment_type": "article_block",
+      "text": "第八十五条 支票必须记载下列事项：\n（一）表明“支票”的字样；\n（二）无条件支付的委托；\n（三）确定的金额；\n（四）付款人名称；\n（五）出票日期；\n（六）出票人签章。\n支票上未记载前款规定事项之一的，支票无效。"
+    },
+    {
+      "type": "Document",
+      "id": "DOC:支付结算办法",
+      "name": "支付结算办法"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "支付结算办法:附一-六:BLOCK",
+      "ref": "附一-六",
+      "segment_type": "appendix_item",
+      "text": "六、票据的出票日期必须使用中文大写。为防止变造票据的出禀日期，在填写月、日时，月为壹、贰和壹拾的，日为壹至玖和壹拾、贰拾和叁抬的，应在其前加零；日为抬壹至拾玖的，应在其前加壹.如1月15日，应写成零壹月壹拾伍日。再如10月20日，应写成零壹拾月零贰拾日。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "支付结算办法:附一-五:BLOCK",
+      "ref": "附一-五",
+      "segment_type": "appendix_item",
+      "text": "五、阿拉伯小写金额数字前面，均应填写入民币符号￥（或草写：）。阿拉伯小写金额数字要认真填写，不得连写分辨不清。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "中华人民共和国票据法:第八条:BLOCK",
+      "ref": "第八条",
+      "segment_type": "article_block",
+      "text": "第八条 票据金额以中文大写和数码同时记载，二者必须一致，二者不一致的，票据无效。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "支付结算办法:第十三条:BLOCK",
+      "ref": "第十三条",
+      "segment_type": "article_block",
+      "text": "第十三条 票据和结算凭证金额以中文大写和阿拉伯数码同时记载，二者必须一致，二者不一致的票据无效；二者不一致的结算凭证，银行不予受理。\n少数民族地区和外国驻华使领馆根据实际需要，金额大写可以使用少数民族文字或者外国文字记载。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "支付结算办法:第一百一十八条:BLOCK",
+      "ref": "第一百一十八条",
+      "segment_type": "article_block",
+      "text": "第一百一十八条 签发支票必须记载下列事项：\n（一）表明“支票”的字样；\n（二）无条件支付的委托；\n（三）确定的金额；\n（四）付款人名称；\n（五）出票日期；\n（六）出票人签章。\n欠缺记载上列事项之一的，支票无效。\n支票的付款人为支票上记载的出票人开户银行。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "支付结算办法:附一-一:BLOCK",
+      "ref": "附一-一",
+      "segment_type": "appendix_item",
+      "text": "一、中文大写金额数字应用正楷或行书填写，如壹（壹）、贰（贰）、叁、肆（肆）、伍（伍）、陆（陆）、柒、捌、玖、拾、佰、仟、万（万）、亿、元、角、分、零、整（正）等字样。不得用一、二（两）、三、四、五、六、七、八、九、十、念、毛、另（或0）填写，不得自造简化字。如果金额数字书写中使用繁体字，如貳、陸、億、萬、圓的，也应受理。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "支付结算办法:附一-三:BLOCK",
+      "ref": "附一-三",
+      "segment_type": "appendix_item",
+      "text": "三、中文大写金额数字前应标明人民币字样，大写金额数字应紧接人民币字样填写，不得留有空白。大写金额数字前未印人民币字样的，应加填人民币三字。在票据和结算凭证大写金额栏内不得预印固定的仟、佰、拾、万、仟、伯、拾、元、角、分字样。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "支付结算办法:附一-二:BLOCK",
+      "ref": "附一-二",
+      "segment_type": "appendix_item",
+      "text": "二、中文大写金额数字到元为止的，在元之后，应写整（或正）字，在角之后可以不写整（或正）字。大写金额数字有分的，分后面不写整（或正）字。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "支付结算办法:附一-四:BLOCK",
+      "ref": "附一-四",
+      "segment_type": "appendix_item",
+      "text": "四、阿拉伯小写金额数字中有0时，中文大写应按照汉语语言规律、金额数字构成和防止涂改的要求进行书写。举例如下：\n（一）阿拉伯数字中间有O时，中文大写金额要写零字。如￥1，409.50，应写成人民币壹仟肆佰零玖元伍角。\n（二）阿拉伯数字中间连续有几个0时，中文大写金额中间可以只写一个零字。如￥6，007.14，应写成人民币陆仟零柒元壹角肆分。\n（三）阿拉伯金额数字万位或元位是0，或者数字中间连续有几个0，万位、元位也是0，但千位、角位不是0时，中文大写金额中可以只写一个零字，也可以不写零字。如￥1，680.32，应写成人民币壹仟陆佰捌拾元零叁角贰分，或者写成人民币壹仟陆佰捌拾元叁角贰分；又如￥107，000.53，应写成人民币壹拾万柒仟元零伍角叁分，或者写成人民币壹拾万零柒仟元伍角叁分。\n（四）阿拉伯金额数字角位是0，而分位不是0时，中文大额；元后面应写零字。如￥16，409.02，应写成人民币壹万陆仟肆佰零玖元零贰分；又如￥325.04，应写成人民币叁佰贰拾伍元零肆分。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "中华人民共和国票据法:第七条:BLOCK",
+      "ref": "第七条",
+      "segment_type": "article_block",
+      "text": "第七条 票据上的签章，为签名、盖章或者签名加盖章。\n法人和其他使用票据的单位在票据上的签章，为该法人或者该单位的盖章加其法定代表人或者其授权的代理人的签章。\n在票据上的签名，应当为该当事人的本名。"
+    },
+    {
+      "type": "ClauseSegment",
+      "id": "中华人民共和国票据法:第四条:BLOCK",
+      "ref": "第四条",
+      "segment_type": "article_block",
+      "text": "第四条 票据出票人制作票据，应当按照法定条件在票据上签章，并按照所记载的事项承担票据责任。\n持票人行使票据权利，应当按照法定程序在票据上签章，并出示票据。\n其他票据债务人在票据上签章的，按照票据所记载的事项承担票据责任。\n本法所称票据权利，是指持票人向票据债务人请求支付票据金额的权利，包括付款请求权和追索权。\n本法所称票据责任，是指票据债务人向持票人支付票据金额的义务。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-OBL-00116",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第四条第一款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "票据出票人制作票据，应当按照法定条件在票据上签章，并按照所记载的事项承担票据责任。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-OBL-00117",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第四条第二款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "持票人行使票据权利，应当按照法定程序在票据上签章，并出示票据。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-OBL-00118",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第四条第三款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "其他票据债务人在票据上签章的，按照票据所记载的事项承担票据责任。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-DEF-00119",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第四条第四款",
+      "rule_type": "DEF_SCOPE",
+      "content_original": "本法所称票据权利，是指持票人向票据债务人请求支付票据金额的权利，包括付款请求权和追索权。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-DEF-00120",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第四条第五款",
+      "rule_type": "DEF_SCOPE",
+      "content_original": "本法所称票据责任，是指票据债务人向持票人支付票据金额的义务。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-VAL-00126",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第七条第一款",
+      "rule_type": "VAL_THRESHOLD",
+      "content_original": "票据上的签章，为签名、盖章或者签名加盖章。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-OBL-00127",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第七条第二款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "法人和其他使用票据的单位在票据上的签章，为该法人或者该单位的盖章加其法定代表人或者其授权的代理人的签章。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-OBL-00128",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第七条第三款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "在票据上的签名，应当为该当事人的本名。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-VAL-00129",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第八条",
+      "rule_type": "VAL_THRESHOLD",
+      "content_original": "票据金额以中文大写和数码同时记载，二者必须一致，二者不一致的，票据无效。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-OBL-00294",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第八十五条第一款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "第八十五条 支票必须记载下列事项：（一）表明“支票”的字样；（二）无条件支付的委托；（三）确定的金额；（四）付款人名称；（五）出票日期；（六）出票人签章。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-OBL-00295",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第八十五条第二款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "支票上未记载前款规定事项之一的，支票无效。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-OBL-00310",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第九十二条第一句",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "第九十二条 支票的持票人应当自出票日起１０日内提示付款；"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-EVT-00311",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第九十二条第二句前半",
+      "rule_type": "EVT_TRIGGER",
+      "content_original": "异地使用的支票，其提示付款的期限由中国人民银行另行规定。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-PRO-00312",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第九十二条第三句前半",
+      "rule_type": "PRO_FORBIDDEN",
+      "content_original": "超过提示付款期限的，付款人可以不予付款；"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-NIL-OBL-00313",
+      "source_document": "中华人民共和国票据法",
+      "article_reference": "第九十二条第三句后半",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "付款人不予付款的，出票人仍应当对持票人承担票据责任。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-VAL-01122",
+      "source_document": "支付结算办法",
+      "article_reference": "第十三条第一句",
+      "rule_type": "VAL_THRESHOLD",
+      "content_original": "票据和结算凭证金额以中文大写和阿拉伯数码同时记载，二者必须一致，二者不一致的票据无效；二者不一致的结算凭证，银行不予受理。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01384",
+      "source_document": "支付结算办法",
+      "article_reference": "第一百一十八条第一句",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "签发支票必须记载下列事项：（一）表明“支票”的字样；（二）无条件支付的委托；（三）确定的金额；（四）付款人名称；（五）出票日期；（六）出票人签章。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-PRO-01385",
+      "source_document": "支付结算办法",
+      "article_reference": "第一百一十八条第二句",
+      "rule_type": "PRO_FORBIDDEN",
+      "content_original": "欠缺记载上列事项之一的，支票无效。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01386",
+      "source_document": "支付结算办法",
+      "article_reference": "第一百一十八条第三句",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "支票的付款人为支票上记载的出票人开户银行。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-PRO-01740",
+      "source_document": "支付结算办法",
+      "article_reference": "第二十条第一款",
+      "rule_type": "PRO_FORBIDDEN",
+      "content_original": "中文大写金额数字应用正楷或行书填写，如壹（壹）、贰（贰）、叁、肆（肆）、伍（伍）、陆（陆）、柒、捌、玖、拾、佰、仟、万（万）、亿、元、角、分、零、整（正）等字样。不得用一、二（两）、三、四、五、六、七、八、九、十、念、毛、另（或0）填写，不得自造简化字。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-PER-01741",
+      "source_document": "支付结算办法",
+      "article_reference": "第二十条第一款",
+      "rule_type": "PER_AUTH",
+      "content_original": "如果金额数字书写中使用繁体字，如貳、陸、億、萬、圓的，也应受理。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01742",
+      "source_document": "支付结算办法",
+      "article_reference": "第二十条第二款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "中文大写金额数字到元为止的，在元之后，应写整（或正）字。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01743",
+      "source_document": "支付结算办法",
+      "article_reference": "第二十条第二款",
+      "rule_type": "OBL_ONGOING",
+      "content_original": "在角之后可以不写整（或正）字。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01744",
+      "source_document": "支付结算办法",
+      "article_reference": "第二十条第二款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "大写金额数字有分的，分后面不写整（或正）字。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01745",
+      "source_document": "支付结算办法",
+      "article_reference": "第二十条第三款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "中文大写金额数字前应标明人民币字样，大写金额数字应紧接人民币字样填写，不得留有空白。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01746",
+      "source_document": "支付结算办法",
+      "article_reference": "第二十条第三款",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "大写金额数字前未印人民币字样的，应加填人民币三字。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-PRO-01747",
+      "source_document": "支付结算办法",
+      "article_reference": "第二十条第三款",
+      "rule_type": "PRO_FORBIDDEN",
+      "content_original": "在票据和结算凭证大写金额栏内不得预印固定的仟、佰、拾、万、仟、伯、拾、元、角、分字样。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01748",
+      "source_document": "支付结算办法",
+      "article_reference": "第四条（一）",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "（一）阿拉伯数字中间有0时，中文大写金额要写零字。如￥1，409.50，应写成人民币壹仟肆佰零玖元伍角。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01749",
+      "source_document": "支付结算办法",
+      "article_reference": "第四条（二）",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "（二）阿拉伯数字中间连续有几个0时，中文大写金额中间可以只写一个零字。如￥6，007.14，应写成人民币陆仟零柒元壹角肆分。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-PER-01750",
+      "source_document": "支付结算办法",
+      "article_reference": "第四条（三）",
+      "rule_type": "PER_AUTH",
+      "content_original": "（三）阿拉伯金额数字万位或元位是0，或者数字中间连续有几个0，万位、元位也是0，但千位、角位不是0时，中文大写金额中可以只写一个零字，也可以不写零字。如￥1，680.32，应写成人民币壹仟陆佰捌拾元零叁角贰分，或者写成人民币壹仟陆佰捌拾元叁角贰分；又如￥107，000.53，应写成人民币壹拾万柒仟元零伍角叁分，或者写成人民币壹拾万零柒仟元伍角叁分。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01751",
+      "source_document": "支付结算办法",
+      "article_reference": "第四条（四）",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "（四）阿拉伯金额数字角位是0，而分位不是0时，中文大额；元后面应写零字。如￥16，409.02，应写成人民币壹万陆仟肆佰零玖元零贰分；又如￥325.04，应写成人民币叁佰贰拾伍元零肆分。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-DEF-01752",
+      "source_document": "支付结算办法",
+      "article_reference": "第四条（四）示例修正说明",
+      "rule_type": "DEF_SCOPE",
+      "content_original": "（四）阿拉伯金额数字角位是0，而分位不是0时，中文大额；元后面应写零字。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01753",
+      "source_document": "支付结算办法",
+      "article_reference": "第五条",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "五、阿拉伯小写金额数字前面，均应填写人民币符号￥（或草写：）。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01754",
+      "source_document": "支付结算办法",
+      "article_reference": "第五条",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "阿拉伯小写金额数字要认真填写，不得连写分辨不清。"
+    },
+    {
+      "type": "LegalAtom",
+      "id": "YZ-PSM-OBL-01755",
+      "source_document": "支付结算办法",
+      "article_reference": "第六条",
+      "rule_type": "OBL_MANDATORY",
+      "content_original": "六、票据的出票日期必须使用中文大写。"
+    }
+  ],
+  "edges": [
+    {
+      "source": "REF-001",
+      "target": "中华人民共和国票据法:第九十二条:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "中华人民共和国票据法:第九十二条:BLOCK",
+      "target": "DOC:中华人民共和国票据法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-001",
+      "target": "YZ-NIL-OBL-00310",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第九十二条:BLOCK",
+      "target": "YZ-NIL-OBL-00310",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-001",
+      "target": "YZ-NIL-EVT-00311",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第九十二条:BLOCK",
+      "target": "YZ-NIL-EVT-00311",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-001",
+      "target": "YZ-NIL-OBL-00313",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第九十二条:BLOCK",
+      "target": "YZ-NIL-OBL-00313",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-001",
+      "target": "YZ-NIL-PRO-00312",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第九十二条:BLOCK",
+      "target": "YZ-NIL-PRO-00312",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-002",
+      "target": "中华人民共和国票据法:第八十五条:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "中华人民共和国票据法:第八十五条:BLOCK",
+      "target": "DOC:中华人民共和国票据法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-002",
+      "target": "YZ-NIL-OBL-00294",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第八十五条:BLOCK",
+      "target": "YZ-NIL-OBL-00294",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-002",
+      "target": "YZ-NIL-OBL-00295",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第八十五条:BLOCK",
+      "target": "YZ-NIL-OBL-00295",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-002",
+      "target": "支付结算办法:附一-六:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "支付结算办法:附一-六:BLOCK",
+      "target": "DOC:支付结算办法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-002",
+      "target": "YZ-PSM-OBL-01755",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-六:BLOCK",
+      "target": "YZ-PSM-OBL-01755",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-003",
+      "target": "支付结算办法:附一-五:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "支付结算办法:附一-五:BLOCK",
+      "target": "DOC:支付结算办法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-003",
+      "target": "YZ-PSM-OBL-01753",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-五:BLOCK",
+      "target": "YZ-PSM-OBL-01753",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-003",
+      "target": "YZ-PSM-OBL-01754",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-五:BLOCK",
+      "target": "YZ-PSM-OBL-01754",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-004",
+      "target": "中华人民共和国票据法:第八条:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "中华人民共和国票据法:第八条:BLOCK",
+      "target": "DOC:中华人民共和国票据法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-004",
+      "target": "YZ-NIL-VAL-00129",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第八条:BLOCK",
+      "target": "YZ-NIL-VAL-00129",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-004",
+      "target": "支付结算办法:第十三条:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "支付结算办法:第十三条:BLOCK",
+      "target": "DOC:支付结算办法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-004",
+      "target": "YZ-PSM-VAL-01122",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:第十三条:BLOCK",
+      "target": "YZ-PSM-VAL-01122",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-005",
+      "target": "中华人民共和国票据法:第八十五条:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "中华人民共和国票据法:第八十五条:BLOCK",
+      "target": "DOC:中华人民共和国票据法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-005",
+      "target": "YZ-NIL-OBL-00294",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第八十五条:BLOCK",
+      "target": "YZ-NIL-OBL-00294",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-005",
+      "target": "YZ-NIL-OBL-00295",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第八十五条:BLOCK",
+      "target": "YZ-NIL-OBL-00295",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-005",
+      "target": "支付结算办法:第一百一十八条:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "支付结算办法:第一百一十八条:BLOCK",
+      "target": "DOC:支付结算办法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-005",
+      "target": "YZ-PSM-OBL-01384",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:第一百一十八条:BLOCK",
+      "target": "YZ-PSM-OBL-01384",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-005",
+      "target": "YZ-PSM-OBL-01386",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:第一百一十八条:BLOCK",
+      "target": "YZ-PSM-OBL-01386",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-005",
+      "target": "YZ-PSM-PRO-01385",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:第一百一十八条:BLOCK",
+      "target": "YZ-PSM-PRO-01385",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "支付结算办法:附一-一:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "支付结算办法:附一-一:BLOCK",
+      "target": "DOC:支付结算办法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-PRO-01740",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-一:BLOCK",
+      "target": "YZ-PSM-PRO-01740",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-PER-01741",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-一:BLOCK",
+      "target": "YZ-PSM-PER-01741",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "支付结算办法:附一-三:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "支付结算办法:附一-三:BLOCK",
+      "target": "DOC:支付结算办法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-PRO-01747",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-三:BLOCK",
+      "target": "YZ-PSM-PRO-01747",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-OBL-01745",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-三:BLOCK",
+      "target": "YZ-PSM-OBL-01745",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-OBL-01746",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-三:BLOCK",
+      "target": "YZ-PSM-OBL-01746",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "支付结算办法:附一-二:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "支付结算办法:附一-二:BLOCK",
+      "target": "DOC:支付结算办法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-OBL-01742",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-二:BLOCK",
+      "target": "YZ-PSM-OBL-01742",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-OBL-01744",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-二:BLOCK",
+      "target": "YZ-PSM-OBL-01744",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-OBL-01743",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-二:BLOCK",
+      "target": "YZ-PSM-OBL-01743",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "支付结算办法:附一-四:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "支付结算办法:附一-四:BLOCK",
+      "target": "DOC:支付结算办法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-PER-01750",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-四:BLOCK",
+      "target": "YZ-PSM-PER-01750",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-OBL-01751",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-四:BLOCK",
+      "target": "YZ-PSM-OBL-01751",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-OBL-01749",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-四:BLOCK",
+      "target": "YZ-PSM-OBL-01749",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-OBL-01748",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-四:BLOCK",
+      "target": "YZ-PSM-OBL-01748",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-006",
+      "target": "YZ-PSM-DEF-01752",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "支付结算办法:附一-四:BLOCK",
+      "target": "YZ-PSM-DEF-01752",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-007",
+      "target": "中华人民共和国票据法:第七条:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "中华人民共和国票据法:第七条:BLOCK",
+      "target": "DOC:中华人民共和国票据法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-007",
+      "target": "YZ-NIL-OBL-00127",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第七条:BLOCK",
+      "target": "YZ-NIL-OBL-00127",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-007",
+      "target": "YZ-NIL-VAL-00126",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第七条:BLOCK",
+      "target": "YZ-NIL-VAL-00126",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-007",
+      "target": "YZ-NIL-OBL-00128",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第七条:BLOCK",
+      "target": "YZ-NIL-OBL-00128",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-007",
+      "target": "中华人民共和国票据法:第八十五条:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "中华人民共和国票据法:第八十五条:BLOCK",
+      "target": "DOC:中华人民共和国票据法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-007",
+      "target": "YZ-NIL-OBL-00294",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第八十五条:BLOCK",
+      "target": "YZ-NIL-OBL-00294",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-007",
+      "target": "YZ-NIL-OBL-00295",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第八十五条:BLOCK",
+      "target": "YZ-NIL-OBL-00295",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-007",
+      "target": "中华人民共和国票据法:第四条:BLOCK",
+      "type": "SUPPORTED_BY"
+    },
+    {
+      "source": "中华人民共和国票据法:第四条:BLOCK",
+      "target": "DOC:中华人民共和国票据法",
+      "type": "FROM_DOCUMENT"
+    },
+    {
+      "source": "REF-007",
+      "target": "YZ-NIL-OBL-00116",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第四条:BLOCK",
+      "target": "YZ-NIL-OBL-00116",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-007",
+      "target": "YZ-NIL-DEF-00119",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第四条:BLOCK",
+      "target": "YZ-NIL-DEF-00119",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-007",
+      "target": "YZ-NIL-OBL-00118",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第四条:BLOCK",
+      "target": "YZ-NIL-OBL-00118",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-007",
+      "target": "YZ-NIL-OBL-00117",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第四条:BLOCK",
+      "target": "YZ-NIL-OBL-00117",
+      "type": "YIELDS_ATOM"
+    },
+    {
+      "source": "REF-007",
+      "target": "YZ-NIL-DEF-00120",
+      "type": "LINKS_TO_ATOM"
+    },
+    {
+      "source": "中华人民共和国票据法:第四条:BLOCK",
+      "target": "YZ-NIL-DEF-00120",
+      "type": "YIELDS_ATOM"
+    }
+  ]
+}

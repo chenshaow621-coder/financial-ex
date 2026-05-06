@@ -1,0 +1,28 @@
+0 verbose cli D:\Node.js\node.exe D:\Node.js\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.9.0
+2 info using node@v24.14.0
+3 silly config load:file:D:\Node.js\node_modules\npm\npmrc
+4 silly config load:file:D:\pythonProject-financial ex\.npmrc
+5 silly config load:file:C:\Users\86152\.npmrc
+6 silly config load:file:D:\Node.js\node_global\etc\npmrc
+7 verbose title npm exec superpowers-codex install
+8 verbose argv "exec" "--cache" "./temp_cache" "--" "superpowers-codex" "install"
+9 verbose logfile logs-max:10 dir:D:\pythonProject-financial ex\temp_cache\_logs\2026-04-08T13_07_49_137Z-
+10 verbose logfile D:\pythonProject-financial ex\temp_cache\_logs\2026-04-08T13_07_49_137Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 http fetch GET 200 https://registry.npmmirror.com/superpowers-codex 55ms (cache miss)
+14 verbose stack Error: could not determine executable to run
+14 verbose stack     at getBinFromManifest (D:\Node.js\node_modules\npm\node_modules\libnpmexec\lib\get-bin-from-manifest.js:17:23)
+14 verbose stack     at exec (D:\Node.js\node_modules\npm\node_modules\libnpmexec\lib\index.js:211:15)
+14 verbose stack     at async Npm.exec (D:\Node.js\node_modules\npm\lib\npm.js:208:9)
+14 verbose stack     at async module.exports (D:\Node.js\node_modules\npm\lib\cli\entry.js:67:5)
+15 verbose pkgid superpowers-codex@6.0.2
+16 error could not determine executable to run
+17 verbose cwd D:\pythonProject-financial ex
+18 verbose os Windows_NT 10.0.26200
+19 verbose node v24.14.0
+20 verbose npm  v11.9.0
+21 verbose exit 1
+22 verbose code 1
+23 error A complete log of this run can be found in: D:\pythonProject-financial ex\temp_cache\_logs\2026-04-08T13_07_49_137Z-debug-0.log
