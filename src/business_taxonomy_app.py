@@ -1,15 +1,18 @@
+import ast
 import json
 import math
-import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import contextmanager
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote_plus
 
 import pandas as pd
 import streamlit as st
 from neo4j import GraphDatabase
+from neo4j.exceptions import AuthError, ServiceUnavailable
+from sqlalchemy import create_engine, text
 from streamlit_agraph import Config, Edge, Node, agraph
 
 from business_taxonomy_pipeline import (
@@ -22,11 +25,28 @@ from business_taxonomy_pipeline import (
     resolve_taxonomy_doc,
 )
 from compliance_recall_controller import ComplianceRecallController
+from conflict_detection import detect_atom_conflicts
+from entity_normalization import normalize_actor_filter_terms
 from main import run_pipeline
+from mysql_traceability import (
+    MySQLTraceabilityStore,
+    TRACE_ARTIFACTS,
+    TRACE_BATCHES,
+    dedupe_artifact_items,
+    sync_artifact_items,
+)
+from neo4j_config import DEFAULT_NEO4J_URI, DEFAULT_NEO4J_USER, get_neo4j_password
+from prompt_manager import (
+    clear_prompt_template_cache,
+    list_prompt_records,
+    load_prompt_text,
+    reset_prompt_override,
+    save_prompt_override,
+)
 from run_stage1_2_ner import run_phase1
 
-URI = "bolt://localhost:7687"
-AUTH = ("neo4j", "123456")
+URI = DEFAULT_NEO4J_URI
+AUTH = (DEFAULT_NEO4J_USER, get_neo4j_password())
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
@@ -80,19 +100,606 @@ SCENARIO_PRESETS = {
 }
 
 
-@st.cache_resource
-def get_driver():
-    return GraphDatabase.driver(URI, auth=AUTH)
+@lru_cache(maxsize=1)
+def get_driver(neo4j_uri, neo4j_user, neo4j_password):
+    if not neo4j_password:
+        return None
+    return GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
 
 
-@st.cache_resource
-def get_recall_controller(model_name):
+def check_neo4j_connection(driver):
+    if driver is None:
+        return False, "Neo4j 密码未配置。请在本页连接配置中输入密码，或在本地 `qwen.env` 中设置 `NEO4J_PASSWORD`。"
+    try:
+        driver.verify_connectivity()
+        return True, ""
+    except AuthError:
+        return False, "Neo4j 认证失败。请检查用户名和密码。"
+    except ServiceUnavailable as exc:
+        return False, f"Neo4j 服务不可用或地址无法连接：{exc}"
+    except Exception as exc:
+        return False, f"Neo4j 连接失败：{exc}"
+
+
+def render_neo4j_unconfigured_message():
+    st.warning("Neo4j 密码未配置。请在本页连接配置中输入密码，或在本地 `qwen.env` 中设置 `NEO4J_PASSWORD`。")
+
+
+def render_neo4j_connection_error(message):
+    st.error(message)
+
+
+@lru_cache(maxsize=32)
+def get_recall_controller(model_name, api_key, base_url):
     return ComplianceRecallController(
         model=model_name,
+        api_config={"api_key": api_key, "base_url": base_url, "reasoning_model": model_name},
         recall_judgement_mode="llm",
         atom_analysis_mode="llm",
         final_judgement_mode="llm",
     )
+
+
+def build_mysql_browser_url(host, port, user, password, database):
+    quoted_password = quote_plus(str(password or ""))
+    return f"mysql+pymysql://{user}:{quoted_password}@{host}:{port}/{database}?charset=utf8mb4"
+
+
+@lru_cache(maxsize=8)
+def get_mysql_engine(mysql_url):
+    return create_engine(mysql_url, future=True, pool_pre_ping=True)
+
+
+def query_mysql_df(mysql_url, sql, params=None):
+    engine = get_mysql_engine(mysql_url)
+    with engine.connect() as conn:
+        result = conn.execute(text(sql), params or {})
+        rows = result.fetchall()
+        return pd.DataFrame(rows, columns=result.keys())
+
+
+def query_mysql_scalar(mysql_url, sql, params=None, default=0):
+    engine = get_mysql_engine(mysql_url)
+    with engine.connect() as conn:
+        value = conn.execute(text(sql), params or {}).scalar_one_or_none()
+    return default if value is None else value
+
+
+def normalize_mysql_identifier(identifier):
+    text_value = str(identifier or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_]+", text_value):
+        raise ValueError(f"Invalid MySQL identifier: {identifier}")
+    return text_value
+
+
+def fetch_mysql_tables(mysql_url):
+    df = query_mysql_df(mysql_url, "SHOW TABLES")
+    if df.empty:
+        return []
+    first_column = df.columns[0]
+    return [str(value) for value in df[first_column].tolist()]
+
+
+def fetch_mysql_table_schema(mysql_url, table_name):
+    safe_table = normalize_mysql_identifier(table_name)
+    return query_mysql_df(mysql_url, f"DESCRIBE `{safe_table}`")
+
+
+def fetch_mysql_table_count(mysql_url, table_name):
+    safe_table = normalize_mysql_identifier(table_name)
+    return int(query_mysql_scalar(mysql_url, f"SELECT COUNT(*) FROM `{safe_table}`", default=0))
+
+
+def fetch_mysql_table_preview(mysql_url, table_name, limit=100):
+    safe_table = normalize_mysql_identifier(table_name)
+    columns_df = fetch_mysql_table_schema(mysql_url, safe_table)
+    column_names = set(columns_df.get("Field", []).tolist())
+    order_clause = ""
+    for candidate in ("id", "created_at", "round_index", "batch_id", "artifact_id", "atom_id"):
+        if candidate in column_names:
+            order_clause = f" ORDER BY `{candidate}` DESC"
+            break
+    limit_value = max(1, min(int(limit), 500))
+    return query_mysql_df(mysql_url, f"SELECT * FROM `{safe_table}`{order_clause} LIMIT {limit_value}")
+
+
+def fetch_mysql_metrics(mysql_url, tables):
+    table_set = set(tables)
+
+    def count_if_exists(table_name):
+        if table_name not in table_set:
+            return 0
+        return fetch_mysql_table_count(mysql_url, table_name)
+
+    return {
+        "batch_count": count_if_exists("trace_batches"),
+        "artifact_count": count_if_exists("trace_artifacts"),
+        "atom_count": count_if_exists("legal_atoms"),
+        "scene_match_count": count_if_exists("scene_matches"),
+        "recall_query_count": count_if_exists("taxonomy_recall_queries"),
+        "compliance_report_count": count_if_exists("compliance_recall_reports"),
+    }
+
+
+def fetch_mysql_batches(mysql_url, limit=30):
+    return query_mysql_df(
+        mysql_url,
+        """
+        SELECT
+            b.batch_id,
+            b.batch_label,
+            b.source_dir,
+            b.notes,
+            b.created_at,
+            COUNT(a.artifact_id) AS artifact_count,
+            COALESCE(SUM(a.row_count), 0) AS total_rows
+        FROM trace_batches b
+        LEFT JOIN trace_artifacts a ON b.batch_id = a.batch_id
+        GROUP BY b.batch_id, b.batch_label, b.source_dir, b.notes, b.created_at
+        ORDER BY b.created_at DESC
+        LIMIT :limit_value
+        """,
+        {"limit_value": int(limit)},
+    )
+
+
+def fetch_mysql_artifacts(mysql_url, limit=200, batch_id=None, artifact_type=None):
+    where_clauses = []
+    params = {"limit_value": int(limit)}
+    if batch_id:
+        where_clauses.append("a.batch_id = :batch_id")
+        params["batch_id"] = str(batch_id)
+    if artifact_type and artifact_type != "全部":
+        where_clauses.append("a.artifact_type = :artifact_type")
+        params["artifact_type"] = str(artifact_type)
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    return query_mysql_df(
+        mysql_url,
+        f"""
+        SELECT
+            a.artifact_id,
+            a.batch_id,
+            b.batch_label,
+            a.artifact_type,
+            a.artifact_name,
+            a.artifact_path,
+            a.row_count,
+            a.file_size_bytes,
+            a.created_at
+        FROM trace_artifacts a
+        LEFT JOIN trace_batches b ON a.batch_id = b.batch_id
+        {where_sql}
+        ORDER BY a.created_at DESC
+        LIMIT :limit_value
+        """,
+        params,
+    )
+
+
+def fetch_mysql_rows_by_artifact(mysql_url, table_name, artifact_id, limit=200):
+    safe_table = normalize_mysql_identifier(table_name)
+    limit_value = max(1, min(int(limit), 500))
+    return query_mysql_df(
+        mysql_url,
+        f"SELECT * FROM `{safe_table}` WHERE artifact_id = :artifact_id LIMIT {limit_value}",
+        {"artifact_id": str(artifact_id)},
+    )
+
+
+def fetch_mysql_artifact_payloads(mysql_url, artifact_row, limit=200):
+    artifact_id = str(artifact_row.get("artifact_id", "")).strip()
+    artifact_type = str(artifact_row.get("artifact_type", "")).strip()
+    if not artifact_id or not artifact_type:
+        return []
+
+    payloads = []
+    if artifact_type == "phase1_entities":
+        payloads.append(("phase1_chunks", fetch_mysql_rows_by_artifact(mysql_url, "phase1_chunks", artifact_id, limit=limit)))
+    elif artifact_type == "legal_atoms":
+        payloads.append(("legal_atoms", fetch_mysql_rows_by_artifact(mysql_url, "legal_atoms", artifact_id, limit=limit)))
+    elif artifact_type == "classified_atoms":
+        payloads.append(("legal_atoms", fetch_mysql_rows_by_artifact(mysql_url, "legal_atoms", artifact_id, limit=limit)))
+        payloads.append(("scene_matches", fetch_mysql_rows_by_artifact(mysql_url, "scene_matches", artifact_id, limit=limit)))
+    elif artifact_type == "taxonomy_catalog":
+        payloads.append(("taxonomy_modules", fetch_mysql_rows_by_artifact(mysql_url, "taxonomy_modules", artifact_id, limit=limit)))
+        payloads.append(("taxonomy_scenes", fetch_mysql_rows_by_artifact(mysql_url, "taxonomy_scenes", artifact_id, limit=limit)))
+    elif artifact_type == "taxonomy_recall_report":
+        payloads.append(("taxonomy_recall_queries", fetch_mysql_rows_by_artifact(mysql_url, "taxonomy_recall_queries", artifact_id, limit=limit)))
+    elif artifact_type == "compliance_recall_report":
+        payloads.append(("compliance_recall_reports", fetch_mysql_rows_by_artifact(mysql_url, "compliance_recall_reports", artifact_id, limit=limit)))
+        payloads.append(("compliance_recall_rounds", fetch_mysql_rows_by_artifact(mysql_url, "compliance_recall_rounds", artifact_id, limit=limit)))
+    elif artifact_type == "sample_review_checklist":
+        payloads.append(("sample_review_rows", fetch_mysql_rows_by_artifact(mysql_url, "sample_review_rows", artifact_id, limit=limit)))
+    return payloads
+
+
+def fetch_mysql_atom_trace(mysql_url, atom_id):
+    atom_rows = query_mysql_df(
+        mysql_url,
+        """
+        SELECT
+            la.atom_id,
+            la.source_document,
+            la.rule_type,
+            la.article_reference,
+            la.what_text,
+            la.how_text,
+            la.review_reason,
+            ta.artifact_type,
+            ta.artifact_name,
+            tb.batch_label,
+            ta.created_at
+        FROM legal_atoms la
+        JOIN trace_artifacts ta ON la.artifact_id = ta.artifact_id
+        JOIN trace_batches tb ON ta.batch_id = tb.batch_id
+        WHERE la.atom_id = :atom_id
+        ORDER BY ta.created_at DESC
+        """,
+        {"atom_id": str(atom_id).strip()},
+    )
+    scene_rows = query_mysql_df(
+        mysql_url,
+        """
+        SELECT
+            sm.atom_id,
+            sm.scene_key,
+            sm.scene_name,
+            sm.module_code,
+            sm.score,
+            sm.matched_terms,
+            ta.artifact_name,
+            tb.batch_label
+        FROM scene_matches sm
+        JOIN trace_artifacts ta ON sm.artifact_id = ta.artifact_id
+        JOIN trace_batches tb ON ta.batch_id = tb.batch_id
+        WHERE sm.atom_id = :atom_id
+        ORDER BY sm.score DESC, ta.created_at DESC
+        """,
+        {"atom_id": str(atom_id).strip()},
+    )
+    return atom_rows, scene_rows
+
+
+def fetch_mysql_report_list(mysql_url, limit=30):
+    return query_mysql_df(
+        mysql_url,
+        """
+        SELECT
+            cr.id,
+            cr.question,
+            cr.final_decision,
+            cr.final_recall_atom_count,
+            ta.artifact_name,
+            tb.batch_label
+        FROM compliance_recall_reports cr
+        JOIN trace_artifacts ta ON cr.artifact_id = ta.artifact_id
+        JOIN trace_batches tb ON ta.batch_id = tb.batch_id
+        ORDER BY cr.id DESC
+        LIMIT :limit_value
+        """,
+        {"limit_value": int(limit)},
+    )
+
+
+def fetch_mysql_report_detail(mysql_url, report_id):
+    report_df = query_mysql_df(
+        mysql_url,
+        """
+        SELECT
+            cr.id,
+            cr.artifact_id,
+            cr.question,
+            cr.raw_query,
+            cr.final_decision,
+            cr.judge_final_decision,
+            cr.stop_reason,
+            cr.can_make_final_compliance_judgement,
+            cr.final_recall_atom_count,
+            cr.report_json
+        FROM compliance_recall_reports cr
+        WHERE cr.id = :report_id
+        """,
+        {"report_id": int(report_id)},
+    )
+    rounds_df = query_mysql_df(
+        mysql_url,
+        """
+        SELECT
+            round_index,
+            input_atom_count,
+            output_atom_count,
+            new_atom_count,
+            round_json
+        FROM compliance_recall_rounds
+        WHERE artifact_id = (SELECT artifact_id FROM compliance_recall_reports WHERE id = :report_id)
+        ORDER BY round_index ASC
+        """,
+        {"report_id": int(report_id)},
+    )
+    return report_df, rounds_df
+
+
+def parse_json_like(value):
+    if isinstance(value, (dict, list)):
+        return value
+    text_value = str(value or "").strip()
+    if not text_value:
+        return None
+    try:
+        return json.loads(text_value)
+    except Exception:
+        return text_value
+
+
+def coerce_list_values(value):
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text_value = str(value or "").strip()
+    if not text_value:
+        return []
+    try:
+        parsed = json.loads(text_value)
+    except Exception:
+        try:
+            parsed = ast.literal_eval(text_value)
+        except Exception:
+            parsed = None
+    if isinstance(parsed, list):
+        return [str(item).strip() for item in parsed if str(item).strip()]
+    return [text_value]
+
+
+def build_short_id(value, prefix):
+    text_value = str(value or "").strip()
+    if not text_value:
+        return "-"
+    if len(text_value) <= 12:
+        return text_value
+    return f"{prefix}-{text_value[:8]}"
+
+
+def shorten_identifier_columns(df):
+    if df is None or df.empty:
+        return df
+    result = df.copy()
+    if "batch_id" in result.columns:
+        result["batch_id"] = result["batch_id"].apply(lambda value: build_short_id(value, "BATCH"))
+    if "artifact_id" in result.columns:
+        result["artifact_id"] = result["artifact_id"].apply(lambda value: build_short_id(value, "ART"))
+    return result
+
+
+def prettify_batch_df(batch_df):
+    if batch_df is None or batch_df.empty:
+        return batch_df
+    result = batch_df.copy()
+    result["批次标识"] = result["batch_id"].apply(lambda value: build_short_id(value, "BATCH"))
+    result = result.rename(
+        columns={
+            "batch_label": "批次名称",
+            "created_at": "导入时间",
+            "artifact_count": "产物数",
+            "total_rows": "写入记录数",
+            "source_dir": "来源目录",
+            "notes": "备注",
+        }
+    )
+    display_columns = ["批次名称", "批次标识", "导入时间", "产物数", "写入记录数", "来源目录", "备注"]
+    return result[display_columns]
+
+
+def prettify_artifact_df(artifact_df):
+    if artifact_df is None or artifact_df.empty:
+        return artifact_df
+    result = artifact_df.copy()
+    result["产物标识"] = result["artifact_id"].apply(lambda value: build_short_id(value, "ART"))
+    result["产物类型"] = result["artifact_type"].apply(lambda value: EXTRACTION_MYSQL_ARTIFACT_LABELS.get(str(value), str(value)))
+    result = result.rename(
+        columns={
+            "batch_label": "所属批次",
+            "artifact_name": "文件名",
+            "artifact_path": "文件路径",
+            "row_count": "记录数",
+            "file_size_bytes": "文件大小(bytes)",
+            "created_at": "导入时间",
+        }
+    )
+    display_columns = ["所属批次", "产物标识", "产物类型", "文件名", "记录数", "导入时间", "文件路径"]
+    optional_columns = [column for column in ("文件大小(bytes)",) if column in result.columns]
+    return result[display_columns + optional_columns]
+
+
+def prettify_atom_trace_df(atom_rows, scene_rows):
+    atom_df = atom_rows.copy() if atom_rows is not None else pd.DataFrame()
+    scene_df = scene_rows.copy() if scene_rows is not None else pd.DataFrame()
+    if not atom_df.empty:
+        atom_df = atom_df.rename(
+            columns={
+                "atom_id": "Atom 编号",
+                "source_document": "来源法规",
+                "rule_type": "规则类型",
+                "article_reference": "条款位置",
+                "what_text": "事项",
+                "how_text": "规则内容",
+                "review_reason": "复核原因",
+                "artifact_type": "产物类型",
+                "artifact_name": "文件名",
+                "batch_label": "所属批次",
+                "created_at": "导入时间",
+            }
+        )
+    if not scene_df.empty:
+        scene_df = scene_df.rename(
+            columns={
+                "atom_id": "Atom 编号",
+                "scene_key": "场景编号",
+                "scene_name": "场景名称",
+                "module_code": "业务模块",
+                "score": "命中分数",
+                "matched_terms": "命中词",
+                "artifact_name": "文件名",
+                "batch_label": "所属批次",
+            }
+        )
+    return atom_df, scene_df
+
+
+def prettify_report_df(report_df):
+    if report_df is None or report_df.empty:
+        return report_df
+    return report_df.rename(
+        columns={
+            "id": "报告编号",
+            "question": "问题",
+            "final_decision": "最终结论",
+            "final_recall_atom_count": "最终证据数",
+            "artifact_name": "文件名",
+            "batch_label": "所属批次",
+        }
+    )
+
+
+def fetch_mysql_classified_atoms(mysql_url, batch_id=None):
+    where_clauses = ["ta.artifact_type = 'classified_atoms'"]
+    params = {}
+    if batch_id:
+        where_clauses.append("ta.batch_id = :batch_id")
+        params["batch_id"] = str(batch_id)
+    where_sql = " AND ".join(where_clauses)
+    return query_mysql_df(
+        mysql_url,
+        f"""
+        SELECT
+            la.atom_id,
+            la.source_document,
+            la.article_reference,
+            la.rule_type,
+            la.who_text AS who,
+            la.what_text AS what,
+            la.how_text AS how,
+            la.business_taxonomy_label_codes,
+            la.business_taxonomy_label_paths,
+            ta.batch_id,
+            ta.artifact_id,
+            ta.created_at
+        FROM legal_atoms la
+        JOIN trace_artifacts ta ON la.artifact_id = ta.artifact_id
+        WHERE {where_sql}
+        ORDER BY ta.created_at DESC, la.id ASC
+        """,
+        params,
+    )
+
+
+def fetch_mysql_scene_match_summary(mysql_url, batch_id=None, limit=20):
+    where_clauses = []
+    params = {"limit_value": int(limit)}
+    if batch_id:
+        where_clauses.append("ta.batch_id = :batch_id")
+        params["batch_id"] = str(batch_id)
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    return query_mysql_df(
+        mysql_url,
+        f"""
+        SELECT
+            sm.module_code,
+            sm.scene_key,
+            sm.scene_name,
+            COUNT(*) AS atom_count
+        FROM scene_matches sm
+        JOIN trace_artifacts ta ON sm.artifact_id = ta.artifact_id
+        {where_sql}
+        GROUP BY sm.module_code, sm.scene_key, sm.scene_name
+        ORDER BY atom_count DESC, sm.scene_key ASC
+        LIMIT :limit_value
+        """,
+        params,
+    )
+
+
+def build_mysql_batch_business_summary(mysql_url, batch_id=None):
+    classified_df = fetch_mysql_classified_atoms(mysql_url, batch_id=batch_id)
+    scene_df = fetch_mysql_scene_match_summary(mysql_url, batch_id=batch_id, limit=20)
+    scene_count_sql = """
+        SELECT COUNT(DISTINCT sm.scene_key)
+        FROM scene_matches sm
+        JOIN trace_artifacts ta ON sm.artifact_id = ta.artifact_id
+    """
+    scene_count_params = {}
+    if batch_id:
+        scene_count_sql += " WHERE ta.batch_id = :batch_id"
+        scene_count_params["batch_id"] = str(batch_id)
+    scene_count = int(query_mysql_scalar(mysql_url, scene_count_sql, params=scene_count_params, default=0))
+    if classified_df.empty:
+        return {
+            "classified_atom_count": 0,
+            "labelled_atom_count": 0,
+            "module_count": 0,
+            "scene_count": scene_count,
+            "avg_labels_per_atom": 0.0,
+            "multi_label_atom_count": 0,
+            "document_count": 0,
+            "rule_type_df": pd.DataFrame(),
+            "module_df": pd.DataFrame(),
+            "scene_df": scene_df,
+            "classified_df": classified_df,
+        }
+
+    label_counts = []
+    module_rows = []
+    for row in classified_df.to_dict(orient="records"):
+        codes = [code for code in coerce_list_values(row.get("business_taxonomy_label_codes")) if code and code != UNCLASSIFIED_CODE]
+        paths = [path for path in coerce_list_values(row.get("business_taxonomy_label_paths")) if path]
+        label_counts.append(len(codes))
+        for index, code in enumerate(codes):
+            path_text = paths[index] if index < len(paths) else ""
+            module_rows.append(
+                {
+                    "模块编码": code,
+                    "模块名称": path_text.split(">")[-1].strip() if ">" in path_text else path_text or code,
+                }
+            )
+
+    module_df = pd.DataFrame(module_rows)
+    if not module_df.empty:
+        module_df = (
+            module_df.groupby(["模块编码", "模块名称"], as_index=False)
+            .size()
+            .rename(columns={"size": "原子数"})
+            .sort_values(by=["原子数", "模块编码"], ascending=[False, True])
+            .reset_index(drop=True)
+        )
+
+    rule_type_df = (
+        classified_df.groupby("rule_type", as_index=False)
+        .size()
+        .rename(columns={"rule_type": "规则类型", "size": "原子数"})
+        .sort_values(by=["原子数", "规则类型"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+    labelled_atom_count = sum(1 for count in label_counts if count > 0)
+    return {
+        "classified_atom_count": int(len(classified_df)),
+        "labelled_atom_count": int(labelled_atom_count),
+        "module_count": int(module_df["模块编码"].nunique()) if not module_df.empty else 0,
+        "scene_count": scene_count,
+        "avg_labels_per_atom": round(sum(label_counts) / len(label_counts), 2) if label_counts else 0.0,
+        "multi_label_atom_count": int(sum(1 for count in label_counts if count > 1)),
+        "document_count": int(classified_df["source_document"].nunique()),
+        "rule_type_df": rule_type_df,
+        "module_df": module_df.head(20),
+        "scene_df": scene_df.rename(
+            columns={
+                "module_code": "模块编码",
+                "scene_key": "场景编号",
+                "scene_name": "场景名称",
+                "atom_count": "命中原子数",
+            }
+        ),
+        "classified_df": classified_df,
+    }
 
 
 def split_keyword_lines(text):
@@ -101,7 +708,10 @@ def split_keyword_lines(text):
 
 
 def list_raw_docs():
-    return sorted([path for path in RAW_DIR.glob("*.docx") if not path.name.startswith("~$")], key=lambda item: item.name)
+    docs = []
+    for pattern in ("*.docx", "*.pdf"):
+        docs.extend([path for path in RAW_DIR.glob(pattern) if not path.name.startswith("~$")])
+    return sorted(docs, key=lambda item: item.name)
 
 
 def build_unique_raw_doc_path(filename):
@@ -120,14 +730,15 @@ def build_unique_raw_doc_path(filename):
         index += 1
 
 
-def save_uploaded_docx_files(uploaded_files):
+def save_uploaded_source_files(uploaded_files):
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     saved_names = []
     skipped_names = []
 
     for uploaded_file in uploaded_files or []:
         original_name = Path(str(getattr(uploaded_file, "name", "") or "").strip()).name
-        if not original_name or Path(original_name).suffix.lower() != ".docx":
+        suffix = Path(original_name).suffix.lower()
+        if not original_name or suffix not in {".docx", ".pdf"}:
             skipped_names.append(original_name or "unnamed")
             continue
 
@@ -168,27 +779,6 @@ def safe_load_list(value):
         return parsed if isinstance(parsed, list) else []
     except Exception:
         return []
-
-
-@contextmanager
-def temporary_api_env(api_key, base_url, model, reasoning_model):
-    env_keys = {
-        "DASHSCOPE_API_KEY": api_key,
-        "DASHSCOPE_BASE_URL": base_url,
-        "QWEN_MODEL": model,
-        "QWEN_REASONING_MODEL": reasoning_model or model,
-    }
-    old_values = {key: os.environ.get(key) for key in env_keys}
-    try:
-        for key, value in env_keys.items():
-            os.environ[key] = str(value or "").strip()
-        yield
-    finally:
-        for key, old_value in old_values.items():
-            if old_value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = old_value
 
 
 def validate_llm_inputs(api_key, base_url, model, model_label="模型"):
@@ -331,6 +921,165 @@ def remember_generated_artifact(path_value):
     st.session_state["extract_generated_artifacts"] = artifacts
 
 
+EXTRACTION_MYSQL_ARTIFACT_LABELS = {
+    "phase1_entities": "Phase1/2 \u5b9e\u4f53\u62bd\u53d6",
+    "legal_atoms": "\u539f\u5b50\u62bd\u53d6",
+    "taxonomy_catalog": "\u4e1a\u52a1\u5206\u7c7b\u4f53\u7cfb",
+    "classified_atoms": "\u4e1a\u52a1\u5206\u7c7b",
+    "taxonomy_recall_report": "\u5206\u7c7b\u53ec\u56de\u62a5\u544a",
+    "compliance_recall_report": "\u5408\u89c4\u68c0\u7d22\u62a5\u544a",
+    "sample_review_checklist": "\u62bd\u6837\u6838\u67e5\u6e05\u5355",
+}
+
+ENTITY_GRAPH_SPECS = {
+    "actor": {
+        "label": "主体",
+        "node_label": "BusinessActor",
+        "scene_rel": "SCENE_HAS_ACTOR",
+        "atom_rel": "INVOLVES_ACTOR",
+        "count_key": "scene_actors",
+        "terms_field": "who_terms",
+        "normalized_field": "who_terms_normalized",
+        "color": "#1D4ED8",
+        "light_color": "#93C5FD",
+        "edge_color": "#2563EB",
+        "shape": "box",
+    },
+    "object": {
+        "label": "对象",
+        "node_label": "BusinessObject",
+        "scene_rel": "SCENE_HAS_OBJECT",
+        "atom_rel": "TARGETS_OBJECT",
+        "count_key": "scene_objects",
+        "terms_field": "what_terms_list",
+        "normalized_field": "what_terms_normalized",
+        "color": "#059669",
+        "light_color": "#86EFAC",
+        "edge_color": "#10B981",
+        "shape": "ellipse",
+    },
+    "time_context": {
+        "label": "时间",
+        "node_label": "BusinessTimeContext",
+        "scene_rel": "SCENE_HAS_TIME",
+        "atom_rel": "HAS_TIME_CONTEXT",
+        "count_key": "scene_times",
+        "terms_field": "when_terms_list",
+        "normalized_field": "when_terms_normalized",
+        "color": "#7C3AED",
+        "light_color": "#C4B5FD",
+        "edge_color": "#8B5CF6",
+        "shape": "database",
+    },
+}
+
+MYSQL_SYNC_STATUS_LABELS = {
+    "imported": "\u5df2\u5bfc\u5165",
+    "skipped": "\u5df2\u8df3\u8fc7",
+    "failed": "\u5931\u8d25",
+}
+
+
+def resolve_extraction_output_path(summary_key, output_name):
+    summary = st.session_state.get(summary_key) or {}
+    summary_path = str(summary.get("path") or "").strip()
+    if summary_path:
+        path = Path(summary_path)
+        if path.exists():
+            return path
+
+    filename = str(output_name or "").strip()
+    if not filename:
+        return None
+    return PROCESSED_DIR / filename
+
+
+def build_extraction_mysql_sync_items(phase1_output_name, atoms_output_name, classified_output_name):
+    dynamic_paths = {
+        "phase1_entities": resolve_extraction_output_path("extract_phase1_summary", phase1_output_name),
+        "legal_atoms": resolve_extraction_output_path("extract_atoms_summary", atoms_output_name),
+        "classified_atoms": resolve_extraction_output_path("extract_classified_summary", classified_output_name),
+    }
+    available_dynamic_items = [
+        (artifact_type, path)
+        for artifact_type, path in dynamic_paths.items()
+        if path is not None and path.exists()
+    ]
+    if not available_dynamic_items:
+        return [], None
+
+    taxonomy_catalog_path = resolve_taxonomy_doc()
+    ordered_items = []
+    for artifact_type in ("phase1_entities", "legal_atoms"):
+        path = dynamic_paths.get(artifact_type)
+        if path is not None and path.exists():
+            ordered_items.append((artifact_type, path))
+    if taxonomy_catalog_path.exists():
+        ordered_items.append(("taxonomy_catalog", taxonomy_catalog_path))
+    classified_path = dynamic_paths.get("classified_atoms")
+    if classified_path is not None and classified_path.exists():
+        ordered_items.append(("classified_atoms", classified_path))
+    return dedupe_artifact_items(ordered_items), taxonomy_catalog_path if taxonomy_catalog_path.exists() else None
+
+
+def build_mysql_sync_report(results):
+    batch_id = ""
+    imported_count = 0
+    skipped_count = 0
+    failed_count = 0
+    table_counts = {
+        TRACE_BATCHES: 1 if results else 0,
+        TRACE_ARTIFACTS: 0,
+    }
+    result_rows = []
+
+    for item in results:
+        batch_id = batch_id or str(item.get("batch_id") or "").strip()
+        status = str(item.get("status") or "").strip().lower()
+        if status == "imported":
+            imported_count += 1
+            table_counts[TRACE_ARTIFACTS] += 1
+        elif status == "skipped":
+            skipped_count += 1
+        elif status == "failed":
+            failed_count += 1
+
+        for table_name, row_count in (item.get("table_counts") or {}).items():
+            try:
+                increment = int(row_count or 0)
+            except (TypeError, ValueError):
+                increment = 0
+            table_counts[table_name] = table_counts.get(table_name, 0) + increment
+
+        result_rows.append(
+            {
+                "\u72b6\u6001": MYSQL_SYNC_STATUS_LABELS.get(status, status or "-"),
+                "\u4ea7\u7269\u7c7b\u578b": EXTRACTION_MYSQL_ARTIFACT_LABELS.get(item.get("artifact_type"), item.get("artifact_type", "-")),
+                "\u6587\u4ef6": Path(str(item.get("path") or "")).name,
+                "artifact_id": str(item.get("artifact_id") or ""),
+                "\u5199\u5165\u8bb0\u5f55\u6570": item.get("row_count", ""),
+                "\u573a\u666f\u547d\u4e2d\u6570": item.get("scene_match_count", ""),
+                "\u8f6e\u6b21\u8bb0\u5f55\u6570": item.get("round_count", ""),
+                "\u9519\u8bef": str(item.get("error") or ""),
+            }
+        )
+
+    table_rows = [
+        {"\u8868\u540d": table_name, "\u5199\u5165\u884c\u6570": int(row_count or 0)}
+        for table_name, row_count in table_counts.items()
+        if int(row_count or 0) > 0 or table_name in {TRACE_BATCHES, TRACE_ARTIFACTS}
+    ]
+    table_rows.sort(key=lambda row: (-row["\u5199\u5165\u884c\u6570"], row["\u8868\u540d"]))
+    return {
+        "batch_id": batch_id,
+        "imported_count": imported_count,
+        "skipped_count": skipped_count,
+        "failed_count": failed_count,
+        "result_df": pd.DataFrame(result_rows),
+        "table_df": pd.DataFrame(table_rows),
+    }
+
+
 def safe_ratio(numerator, denominator):
     if not denominator:
         return None
@@ -362,9 +1111,15 @@ def fetch_graph_health_stats(driver):
         "scenes": "MATCH (n:BusinessScene) RETURN count(n) AS c",
         "atoms": "MATCH (n:BusinessAtom) RETURN count(n) AS c",
         "actors": "MATCH (n:BusinessActor) RETURN count(n) AS c",
+        "objects": "MATCH (n:BusinessObject) RETURN count(n) AS c",
+        "time_contexts": "MATCH (n:BusinessTimeContext) RETURN count(n) AS c",
         "tags": "MATCH ()-[r:TAGGED_AS]->() RETURN count(r) AS c",
+        "object_links": "MATCH ()-[r:TARGETS_OBJECT]->() RETURN count(r) AS c",
+        "time_links": "MATCH ()-[r:HAS_TIME_CONTEXT]->() RETURN count(r) AS c",
         "scene_matches": "MATCH ()-[r:MATCHES_SCENE]->() RETURN count(r) AS c",
         "scene_actors": "MATCH ()-[r:SCENE_HAS_ACTOR]->() RETURN count(r) AS c",
+        "scene_objects": "MATCH ()-[r:SCENE_HAS_OBJECT]->() RETURN count(r) AS c",
+        "scene_times": "MATCH ()-[r:SCENE_HAS_TIME]->() RETURN count(r) AS c",
     }
     stats = {}
     with driver.session() as session:
@@ -1509,6 +2264,8 @@ def build_graph_checklist_items(graph_stats=None, overview_items=None, graph_err
     tag_status = "pass" if (tag_ratio or 0.0) >= 0.8 else "warn"
     scene_status = "pass" if graph_stats.get("scene_matches", 0) > 0 else "warn"
     actor_status = "pass" if graph_stats.get("actors", 0) > 0 and graph_stats.get("scene_actors", 0) > 0 else "warn"
+    object_status = "pass" if graph_stats.get("objects", 0) > 0 and graph_stats.get("object_links", 0) > 0 else "warn"
+    time_status = "pass" if graph_stats.get("time_contexts", 0) > 0 and graph_stats.get("time_links", 0) > 0 else "warn"
     overview_status = "pass" if len(overview_items) > 0 else "warn"
 
     items.append(
@@ -1555,6 +2312,30 @@ def build_graph_checklist_items(graph_stats=None, overview_items=None, graph_err
                 f"SCENE_HAS_ACTOR 关系 {graph_stats.get('scene_actors', 0)} 条。"
             ),
             "suggestion": "若主体侧关系不足，重点检查 who / who_terms 的抽取质量。",
+        }
+    )
+    items.append(
+        {
+            "key": "graph_object_relationships",
+            "title": "对象侧关系已建立",
+            "status": object_status,
+            "detail": (
+                f"BusinessObject 节点 {graph_stats.get('objects', 0)} 个，"
+                f"TARGETS_OBJECT 关系 {graph_stats.get('object_links', 0)} 条。"
+            ),
+            "suggestion": "若对象侧关系不足，重点检查 what 字段是否过于整句化，或规范表中的账户/法规简称是否命中。",
+        }
+    )
+    items.append(
+        {
+            "key": "graph_time_relationships",
+            "title": "时间侧关系已建立",
+            "status": time_status,
+            "detail": (
+                f"BusinessTimeContext 节点 {graph_stats.get('time_contexts', 0)} 个，"
+                f"HAS_TIME_CONTEXT 关系 {graph_stats.get('time_links', 0)} 条。"
+            ),
+            "suggestion": "若时间侧关系不足，重点检查 when 字段是否为空，或时间表达是否需要补更多规则化模式。",
         }
     )
     items.append(
@@ -1760,6 +2541,7 @@ def fetch_scene_actor_terms(driver, scene_key, limit=30):
             """
             MATCH (a:BusinessAtom)-[:MATCHES_SCENE]->(:BusinessScene {key: $scene_key})
             WITH CASE
+                    WHEN size(coalesce(a.who_terms_normalized, [])) > 0 THEN coalesce(a.who_terms_normalized, [])
                     WHEN size(coalesce(a.who_terms, [])) > 0 THEN coalesce(a.who_terms, [])
                     WHEN coalesce(a.who, '') <> '' THEN [a.who]
                     ELSE []
@@ -1773,6 +2555,38 @@ def fetch_scene_actor_terms(driver, scene_key, limit=30):
             limit=limit,
         )
         return [dict(row) for row in rows]
+
+
+def fetch_scene_entity_links(driver, scene_key, entity_type, selected_names=None, limit=12):
+    spec = ENTITY_GRAPH_SPECS[entity_type]
+    selected_names = [str(item).strip() for item in (selected_names or []) if str(item).strip()]
+    with driver.session() as session:
+        rows = session.run(
+            f"""
+            MATCH (:BusinessScene {{key: $scene_key}})-[r:{spec['scene_rel']}]->(n:{spec['node_label']})
+            WHERE size($selected_names) = 0 OR n.name IN $selected_names
+            RETURN n.name AS entity_name,
+                   coalesce(n.normalized_name, n.name) AS normalized_name,
+                   coalesce(n.aliases, []) AS aliases,
+                   coalesce(n.matched_aliases, []) AS matched_aliases,
+                   coalesce(n.source_categories, []) AS source_categories,
+                   coalesce(n.is_normalized, false) AS is_normalized,
+                   r.atom_count AS atom_count
+            ORDER BY atom_count DESC, entity_name
+            LIMIT $limit
+            """,
+            scene_key=scene_key,
+            selected_names=selected_names,
+            limit=limit,
+        )
+        return [dict(row) for row in rows]
+
+
+def fetch_scene_entity_summary(driver, scene_key, limit_per_type=12):
+    return {
+        entity_type: fetch_scene_entity_links(driver, scene_key, entity_type, limit=limit_per_type)
+        for entity_type in ENTITY_GRAPH_SPECS
+    }
 
 
 def fetch_context(driver, module_code, scene_key):
@@ -1819,25 +2633,44 @@ def fetch_broad_atoms(driver, module_code, limit):
 
 
 def fetch_precise_atoms(driver, scene_key, limit, who_terms=None):
-    who_terms = who_terms or []
+    who_terms = normalize_actor_filter_terms(who_terms or [])
     with driver.session() as session:
         rows = session.run(
             """
             MATCH (a:BusinessAtom)-[r:MATCHES_SCENE]->(s:BusinessScene {key: $scene_key})
             WHERE size($who_terms) = 0
-               OR any(term IN $who_terms WHERE term IN coalesce(a.who_terms, []) OR coalesce(a.who, '') CONTAINS term)
+               OR any(
+                    term IN $who_terms
+                    WHERE term IN coalesce(a.who_terms_normalized, [])
+                       OR term IN coalesce(a.who_terms, [])
+                       OR coalesce(a.who, '') CONTAINS term
+               )
             RETURN a.id AS atom_id,
                    a.rule_type AS rule_type,
                    a.article_reference AS article_reference,
                    a.who AS who,
-                   coalesce(a.who_terms, []) AS who_terms,
+                   coalesce(a.who_terms_normalized, []) AS who_terms_normalized,
+                   CASE
+                       WHEN size(coalesce(a.who_terms_normalized, [])) > 0 THEN coalesce(a.who_terms_normalized, [])
+                       ELSE coalesce(a.who_terms, [])
+                   END AS who_terms,
                    a.what AS what,
+                   coalesce(a.what_terms_normalized, []) AS what_terms_normalized,
+                   coalesce(a.what_terms, []) AS what_terms_list,
+                   a.when AS when,
+                   coalesce(a.when_terms_normalized, []) AS when_terms_normalized,
+                   coalesce(a.when_terms, []) AS when_terms_list,
                    a.how AS how,
                    a.source_document AS source_document,
                    a.content_original AS content,
                    r.score AS score,
                    r.matched_terms AS matched_terms,
-                   [term IN $who_terms WHERE term IN coalesce(a.who_terms, []) OR coalesce(a.who, '') CONTAINS term] AS matched_who_terms
+                   [
+                       term IN $who_terms
+                       WHERE term IN coalesce(a.who_terms_normalized, [])
+                          OR term IN coalesce(a.who_terms, [])
+                          OR coalesce(a.who, '') CONTAINS term
+                   ] AS matched_who_terms
             ORDER BY r.score DESC, a.id
             LIMIT $limit
             """,
@@ -1849,7 +2682,7 @@ def fetch_precise_atoms(driver, scene_key, limit, who_terms=None):
 
 
 def fetch_counts(driver, module_code, scene_key, who_terms=None):
-    who_terms = who_terms or []
+    who_terms = normalize_actor_filter_terms(who_terms or [])
     with driver.session() as session:
         broad = session.run(
             "MATCH (:BusinessAtom)-[r:TAGGED_AS]->(:BusinessModule {code: $module_code}) RETURN count(r) AS c",
@@ -1866,7 +2699,12 @@ def fetch_counts(driver, module_code, scene_key, who_terms=None):
                 refined = session.run(
                     """
                     MATCH (a:BusinessAtom)-[:MATCHES_SCENE]->(:BusinessScene {key: $scene_key})
-                    WHERE any(term IN $who_terms WHERE term IN coalesce(a.who_terms, []) OR coalesce(a.who, '') CONTAINS term)
+                    WHERE any(
+                        term IN $who_terms
+                        WHERE term IN coalesce(a.who_terms_normalized, [])
+                           OR term IN coalesce(a.who_terms, [])
+                           OR coalesce(a.who, '') CONTAINS term
+                    )
                     RETURN count(a) AS c
                     """,
                     scene_key=scene_key,
@@ -1876,7 +2714,7 @@ def fetch_counts(driver, module_code, scene_key, who_terms=None):
 
 
 def fetch_scene_actor_links(driver, scene_key, actor_terms=None, limit=12):
-    actor_terms = actor_terms or []
+    actor_terms = normalize_actor_filter_terms(actor_terms or [])
     with driver.session() as session:
         rows = session.run(
             """
@@ -1899,10 +2737,11 @@ def text_contains_any(text, terms):
 
 
 def atom_matches_actor(atom, actor_terms):
-    actor_terms = actor_terms or []
+    actor_terms = normalize_actor_filter_terms(actor_terms or [])
     who = str(atom.get("who") or "")
+    who_terms_normalized = atom.get("who_terms_normalized") or []
     who_terms = atom.get("who_terms") or []
-    return any(term in who or term in who_terms for term in actor_terms)
+    return any(term in who or term in who_terms or term in who_terms_normalized for term in actor_terms)
 
 
 def filter_atoms_by_keywords(atoms, keyword_terms):
@@ -2648,11 +3487,11 @@ def atom_color(rule_type):
     return "#94d2bd"
 
 
-def build_graph(context, scenes, broad_atoms, precise_atoms, mode, selected_who_terms=None, scene_actor_links=None):
+def build_graph(context, scenes, broad_atoms, precise_atoms, mode, selected_who_terms=None, entity_links_by_type=None):
     nodes = []
     edges = []
     selected_who_terms = selected_who_terms or []
-    scene_actor_links = scene_actor_links or []
+    entity_links_by_type = entity_links_by_type or {}
 
     category_id = context["category_key"]
     module_id = context["module_code"]
@@ -2668,12 +3507,22 @@ def build_graph(context, scenes, broad_atoms, precise_atoms, mode, selected_who_
         edges.append(Edge(source=module_id, target=scene["key"], color="#6c757d"))
 
     if selected_scene_id:
-        for item in scene_actor_links:
-            actor_name = item["actor_name"]
-            actor_node_id = f"scene-actor::{actor_name}"
-            actor_color = "#577590" if actor_name in selected_who_terms else "#8ecae6"
-            nodes.append(Node(id=actor_node_id, label=f"{actor_name} ({item['atom_count']})", size=16, color=actor_color, shape="box"))
-            edges.append(Edge(source=selected_scene_id, target=actor_node_id, color="#577590"))
+        for entity_type, items in entity_links_by_type.items():
+            spec = ENTITY_GRAPH_SPECS[entity_type]
+            for item in items:
+                entity_name = item["entity_name"]
+                entity_node_id = f"{entity_type}::{entity_name}"
+                is_selected_actor = entity_type == "actor" and entity_name in selected_who_terms
+                nodes.append(
+                    Node(
+                        id=entity_node_id,
+                        label=f"{entity_name} ({item['atom_count']} atoms)",
+                        size=18 if is_selected_actor else 16,
+                        color=spec["color"] if is_selected_actor else spec["light_color"],
+                        shape=spec["shape"],
+                    )
+                )
+                edges.append(Edge(source=selected_scene_id, target=entity_node_id, color=spec["edge_color"]))
 
     if mode in {"模块宽召回", "对比"}:
         for atom in broad_atoms:
@@ -2702,19 +3551,34 @@ def build_graph(context, scenes, broad_atoms, precise_atoms, mode, selected_who_
                 )
             )
             edges.append(Edge(source=selected_scene_id, target=atom_node_id, color="#d62828"))
-            for actor_name in atom.get("matched_who_terms") or []:
-                actor_node_id = f"scene-actor::{actor_name}"
-                nodes.append(Node(id=actor_node_id, label=actor_name, size=16, color="#577590", shape="box"))
-                edges.append(Edge(source=actor_node_id, target=atom_node_id, color="#577590"))
+            for entity_type, spec in ENTITY_GRAPH_SPECS.items():
+                entity_names = atom.get(spec["normalized_field"]) or atom.get(spec["terms_field"]) or []
+                for entity_name in entity_names:
+                    entity_name = str(entity_name or "").strip()
+                    if not entity_name:
+                        continue
+                    entity_node_id = f"{entity_type}::{entity_name}"
+                    is_selected_actor = entity_type == "actor" and entity_name in selected_who_terms
+                    nodes.append(
+                        Node(
+                            id=entity_node_id,
+                            label=entity_name,
+                            size=17 if is_selected_actor else 15,
+                            color=spec["color"] if is_selected_actor else spec["light_color"],
+                            shape=spec["shape"],
+                        )
+                    )
+                    edges.append(Edge(source=entity_node_id, target=atom_node_id, color=spec["edge_color"]))
 
     config = Config(
         width="100%",
-        height=680,
+        height=760,
         directed=True,
         physics=True,
         nodeHighlightBehavior=True,
         highlightColor="#f77f00",
         collapsible=False,
+        hierarchical=False,
     )
     dedup_nodes = list({node.id: node for node in nodes}.values())
     dedup_edges = list(
@@ -2729,6 +3593,22 @@ def build_graph(context, scenes, broad_atoms, precise_atoms, mode, selected_who_
     )
     return dedup_nodes, dedup_edges, config
 
+
+def build_entity_summary_rows(entity_type, items):
+    spec = ENTITY_GRAPH_SPECS[entity_type]
+    return [
+        {
+            "实体类型": spec["label"],
+            "实体名称": item.get("entity_name", ""),
+            "归一名称": item.get("normalized_name", ""),
+            "关联原子数": item.get("atom_count", 0),
+            "别名": " | ".join(item.get("aliases") or []),
+            "命中别名": " | ".join(item.get("matched_aliases") or []),
+            "来源类别": " | ".join(item.get("source_categories") or []),
+            "已归一": "是" if item.get("is_normalized") else "否",
+        }
+        for item in items or []
+    ]
 
 def build_category_overview_graph(items):
     nodes = []
@@ -2859,12 +3739,17 @@ def render_browser_tab(driver):
 
     mode = st.sidebar.radio("观察方式", ["对比", "场景精召回", "模块宽召回"], index=0)
     atom_limit = st.sidebar.slider("图中最多展示 atom 数", min_value=10, max_value=80, value=30, step=10)
+    entity_limit = st.sidebar.slider("每类实体最多展示数", min_value=5, max_value=20, value=10, step=1)
 
     context = fetch_context(driver, module["code"], scene["key"])
     broad_count, precise_count, refined_count = fetch_counts(driver, module["code"], scene["key"], selected_who_terms)
     broad_atoms = fetch_broad_atoms(driver, module["code"], atom_limit if mode != "场景精召回" else 20)
     precise_atoms = fetch_precise_atoms(driver, scene["key"], atom_limit if mode != "模块宽召回" else 20, selected_who_terms)
-    scene_actor_links = fetch_scene_actor_links(driver, scene["key"], selected_who_terms, limit=10) if selected_who_terms else []
+    entity_links_by_type = {
+        "actor": fetch_scene_entity_links(driver, scene["key"], "actor", selected_who_terms, limit=entity_limit),
+        "object": fetch_scene_entity_links(driver, scene["key"], "object", limit=entity_limit),
+        "time_context": fetch_scene_entity_links(driver, scene["key"], "time_context", limit=entity_limit),
+    }
 
     top1, top2, top3, top4 = st.columns(4)
     top1.metric("业务大类", context["category_name"])
@@ -2872,13 +3757,21 @@ def render_browser_tab(driver):
     top3.metric("场景精召回", precise_count)
     top4.metric("主体细筛", refined_count if refined_count is not None else "-")
 
+    entity_metric_cols = st.columns(3)
+    for col, entity_type in zip(entity_metric_cols, ("actor", "object", "time_context")):
+        spec = ENTITY_GRAPH_SPECS[entity_type]
+        items = entity_links_by_type.get(entity_type) or []
+        linked_atoms = sum(int(item.get("atom_count", 0)) for item in items)
+        col.metric(f"{spec['label']}实体", len(items), f"关联 atom {linked_atoms}")
+
     st.markdown(f"**当前路径**：`{context['category_name']} -> {context['module_name']} -> {context.get('scene_name') or '未选择场景'}`")
     if selected_who_terms:
         st.markdown(f"**当前主体筛选**：`{', '.join(selected_who_terms)}`")
+    st.caption("图中同时展示业务节点、场景节点、实体节点以及与主体 / 对象 / 时间相关的原子规则。")
 
-    left_col, right_col = st.columns([2, 1])
+    left_col, right_col = st.columns([2.3, 1])
     with left_col:
-        nodes, edges, config = build_graph(context, scenes, broad_atoms, precise_atoms, mode, selected_who_terms, scene_actor_links)
+        nodes, edges, config = build_graph(context, scenes, broad_atoms, precise_atoms, mode, selected_who_terms, entity_links_by_type)
         agraph(nodes=nodes, edges=edges, config=config)
 
     with right_col:
@@ -2886,12 +3779,15 @@ def render_browser_tab(driver):
         for item in scenes[:20]:
             prefix = ">>" if item["key"] == scene["key"] else "-"
             st.write(f"{prefix} {item['name']} ({item['precise_count']})")
-        if actor_options:
-            st.subheader("场景高频主体")
-            for item in actor_options[:10]:
-                st.write(f"- {item['name']} ({item['precise_count']})")
+        for entity_type in ("actor", "object", "time_context"):
+            spec = ENTITY_GRAPH_SPECS[entity_type]
+            items = entity_links_by_type.get(entity_type) or []
+            if items:
+                st.subheader(f"相关{spec['label']}")
+                for item in items[:8]:
+                    st.write(f"- {item['entity_name']} ({item['atom_count']})")
 
-    detail_left, detail_right = st.columns(2)
+    detail_left, detail_right = st.columns([1.4, 1.6])
     with detail_left:
         st.subheader("场景精召回样本")
         if precise_atoms:
@@ -2901,9 +3797,9 @@ def render_browser_tab(driver):
                         "atom_id": item["atom_id"],
                         "score": item["score"],
                         "who": item["who"],
-                        "rule_type": item["rule_type"],
                         "what": item["what"],
-                        "how": item["how"],
+                        "when": item.get("when", ""),
+                        "rule_type": item["rule_type"],
                         "matched_who_terms": ",".join(item.get("matched_who_terms") or []),
                         "matched_terms": ",".join(item.get("matched_terms") or []),
                     }
@@ -2916,6 +3812,16 @@ def render_browser_tab(driver):
             st.info("当前场景下还没有精召回 atom。")
 
     with detail_right:
+        st.subheader("实体汇总")
+        entity_tabs = st.tabs([ENTITY_GRAPH_SPECS[key]["label"] for key in ("actor", "object", "time_context")])
+        for tab, entity_type in zip(entity_tabs, ("actor", "object", "time_context")):
+            with tab:
+                rows = build_entity_summary_rows(entity_type, entity_links_by_type.get(entity_type) or [])
+                if rows:
+                    st.dataframe(rows, width="stretch", hide_index=True)
+                else:
+                    st.info(f"当前场景没有关联的{ENTITY_GRAPH_SPECS[entity_type]['label']}实体。")
+
         st.subheader("模块宽召回样本")
         st.dataframe(
             [
@@ -2932,7 +3838,6 @@ def render_browser_tab(driver):
             hide_index=True,
         )
 
-
 def render_scenario_tab(driver):
     preset_key = st.selectbox(
         "业务场景模板",
@@ -2945,7 +3850,8 @@ def render_scenario_tab(driver):
     scenes = fetch_scenes(driver, preset["module_code"])
     actor_options = fetch_scene_actor_terms(driver, preset["scene_key"])
     actor_option_names = [item["name"] for item in actor_options]
-    default_terms = [term for term in preset["actor_terms"] if term in actor_option_names]
+    preset_actor_terms = normalize_actor_filter_terms(preset["actor_terms"])
+    default_terms = [term for term in preset_actor_terms if term in actor_option_names]
     selected_actor_terms = st.multiselect(
         "主体范围",
         options=actor_option_names,
@@ -2955,18 +3861,25 @@ def render_scenario_tab(driver):
 
     extra_actor = st.text_input("补充主体关键词", value="")
     actor_terms = list(dict.fromkeys(selected_actor_terms + ([extra_actor.strip()] if extra_actor.strip() else [])))
+    normalized_actor_terms = normalize_actor_filter_terms(actor_terms or preset["actor_terms"])
     atom_limit = st.slider("问题图中最多展示 atom 数", min_value=10, max_value=80, value=25, step=5, key="scenario_atom_limit")
+    entity_limit = st.slider("每类实体最多展示数", min_value=5, max_value=20, value=10, step=1, key="scenario_entity_limit")
 
-    broad_count, precise_count, refined_count = fetch_counts(driver, preset["module_code"], preset["scene_key"], actor_terms)
-    precise_atoms = fetch_precise_atoms(driver, preset["scene_key"], 160, actor_terms)
-    exact_persona_atoms = [item for item in precise_atoms if atom_matches_actor(item, [preset["actor_terms"][-1]])]
-    scene_actor_links = fetch_scene_actor_links(driver, preset["scene_key"], actor_terms or preset["actor_terms"], limit=12)
+    broad_count, precise_count, refined_count = fetch_counts(driver, preset["module_code"], preset["scene_key"], normalized_actor_terms)
+    precise_atoms = fetch_precise_atoms(driver, preset["scene_key"], 160, normalized_actor_terms)
+    focus_actor = preset_actor_terms[-1] if preset_actor_terms else ""
+    exact_persona_atoms = [item for item in precise_atoms if atom_matches_actor(item, [focus_actor])] if focus_actor else []
+    entity_links_by_type = {
+        "actor": fetch_scene_entity_links(driver, preset["scene_key"], "actor", normalized_actor_terms, limit=entity_limit),
+        "object": fetch_scene_entity_links(driver, preset["scene_key"], "object", limit=entity_limit),
+        "time_context": fetch_scene_entity_links(driver, preset["scene_key"], "time_context", limit=entity_limit),
+    }
 
     st.subheader(preset["title"])
     st.markdown(f"**问题**：{preset['question']}")
     st.markdown(f"**路径**：`{context['category_name']} -> {context['module_name']} -> {context.get('scene_name') or '未选择'}`")
-    if actor_terms:
-        st.markdown(f"**主体约束**：`{', '.join(actor_terms)}`")
+    if normalized_actor_terms:
+        st.markdown(f"**主体约束**：`{', '.join(normalized_actor_terms)}`")
 
     top1, top2, top3, top4 = st.columns(4)
     top1.metric("模块宽召回", broad_count)
@@ -2974,7 +3887,14 @@ def render_scenario_tab(driver):
     top3.metric("主体细筛", refined_count if refined_count is not None else len(precise_atoms))
     top4.metric("精确人物画像", len(exact_persona_atoms))
 
-    graph_col, side_col = st.columns([2, 1])
+    entity_metric_cols = st.columns(3)
+    for col, entity_type in zip(entity_metric_cols, ("actor", "object", "time_context")):
+        spec = ENTITY_GRAPH_SPECS[entity_type]
+        items = entity_links_by_type.get(entity_type) or []
+        linked_atoms = sum(int(item.get("atom_count", 0)) for item in items)
+        col.metric(f"{spec['label']}实体", len(items), f"关联 atom {linked_atoms}")
+
+    graph_col, side_col = st.columns([2.2, 1])
     with graph_col:
         nodes, edges, config = build_graph(
             context,
@@ -2982,18 +3902,24 @@ def render_scenario_tab(driver):
             [],
             precise_atoms[:atom_limit],
             "场景精召回",
-            actor_terms,
-            scene_actor_links,
+            normalized_actor_terms,
+            entity_links_by_type,
         )
         agraph(nodes=nodes, edges=edges, config=config)
 
     with side_col:
-        st.subheader("相关主体")
-        for item in scene_actor_links[:10]:
-            st.write(f"- {item['actor_name']} ({item['atom_count']})")
+        for entity_type in ("actor", "object", "time_context"):
+            spec = ENTITY_GRAPH_SPECS[entity_type]
+            items = entity_links_by_type.get(entity_type) or []
+            st.subheader(f"相关{spec['label']}")
+            if items:
+                for item in items[:10]:
+                    st.write(f"- {item['entity_name']} ({item['atom_count']})")
+            else:
+                st.write("- 无")
 
-    focus_tabs = st.tabs([group["label"] for group in preset["focus_groups"]] + ["全部证据"])
-    for tab, group in zip(focus_tabs[:-1], preset["focus_groups"]):
+    summary_tabs = st.tabs([group["label"] for group in preset["focus_groups"]] + ["全部证据", "实体汇总"])
+    for tab, group in zip(summary_tabs[:-2], preset["focus_groups"]):
         with tab:
             group_atoms = filter_atoms_by_keywords(precise_atoms, group["terms"])
             if not group_atoms:
@@ -3016,7 +3942,7 @@ def render_scenario_tab(driver):
                     hide_index=True,
                 )
 
-    with focus_tabs[-1]:
+    with summary_tabs[-2]:
         st.dataframe(
             [
                 {
@@ -3025,6 +3951,7 @@ def render_scenario_tab(driver):
                     "who": item["who"],
                     "rule_type": item["rule_type"],
                     "what": item["what"],
+                    "when": item.get("when", ""),
                     "how": item["how"],
                     "matched_who_terms": ",".join(item.get("matched_who_terms") or []),
                     "matched_terms": ",".join(item.get("matched_terms") or []),
@@ -3034,6 +3961,16 @@ def render_scenario_tab(driver):
             width="stretch",
             hide_index=True,
         )
+
+    with summary_tabs[-1]:
+        entity_tabs = st.tabs([ENTITY_GRAPH_SPECS[key]["label"] for key in ("actor", "object", "time_context")])
+        for tab, entity_type in zip(entity_tabs, ("actor", "object", "time_context")):
+            with tab:
+                rows = build_entity_summary_rows(entity_type, entity_links_by_type.get(entity_type) or [])
+                if rows:
+                    st.dataframe(rows, width="stretch", hide_index=True)
+                else:
+                    st.info(f"当前场景没有关联的{ENTITY_GRAPH_SPECS[entity_type]['label']}实体。")
 
     recall_question_key = f"scenario_recall_question_{preset_key}"
     recall_query_key = f"scenario_recall_query_{preset_key}"
@@ -3058,43 +3995,24 @@ def render_scenario_tab(driver):
 
     recall_api_col, recall_base_col, recall_model_col = st.columns([1.2, 1.4, 1])
     with recall_api_col:
-        recall_api_key = st.text_input(
-            "API Key",
-            key="recall_api_key",
-            value=st.session_state.get("extract_api_key", ""),
-            type="password",
-            help="用于召回推理阶段的 LLM 调用。",
-        )
+        recall_api_key = st.text_input("API Key", key="recall_api_key", value=st.session_state.get("extract_api_key", ""), type="password", help="????????? LLM ???")
     with recall_base_col:
-        recall_base_url = st.text_input(
-            "Base URL",
-            key="recall_base_url",
-            value=st.session_state.get("extract_base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        )
+        recall_base_url = st.text_input("Base URL", key="recall_base_url", value=st.session_state.get("extract_base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
     with recall_model_col:
-        recall_model = st.text_input(
-            "召回模型",
-            key="recall_model",
-            value=st.session_state.get("extract_reasoning_model") or st.session_state.get("extract_model", "qwen-plus"),
-        )
+        recall_model = st.text_input("召回模型", key="recall_model", value=st.session_state.get("extract_reasoning_model") or st.session_state.get("extract_model", "qwen-plus"))
 
     with st.form(key=f"scenario_recall_form_{preset_key}"):
-        st.text_area("合规问题", key=recall_question_key, height=110)
+        st.text_area("业务问题", key=recall_question_key, height=110)
         form_left, form_mid, form_right, form_parallel = st.columns([1.4, 0.9, 0.7, 0.7])
         with form_left:
-            st.text_area(
-                "业务 query（可多行）",
-                key=recall_query_key,
-                height=88,
-                help="每行 1 个 query；也支持 `query | who` 或 `query<TAB>who`。多行会并行召回并推理。",
-            )
+            st.text_area("多 query 输入（可选）", key=recall_query_key, height=88, help="支持 1 行 1 个 query；也支持 `query | who` 或 `query<TAB>who` 形式覆盖默认主体。")
         with form_mid:
             st.text_input("主体关键词", key=recall_who_key)
         with form_right:
-            st.slider("最多推理轮次", min_value=1, max_value=4, key=recall_rounds_key)
+            st.slider("最大推理轮次", min_value=1, max_value=4, key=recall_rounds_key)
         with form_parallel:
             st.slider("并行数", min_value=1, max_value=MAX_RECALL_PARALLEL_WORKERS, key=recall_workers_key)
-        submitted = st.form_submit_button("运行模型推理", width="stretch")
+        submitted = st.form_submit_button("运行召回推理", width="stretch")
 
     if submitted:
         missing = validate_llm_inputs(recall_api_key, recall_base_url, recall_model, model_label="召回模型")
@@ -3104,68 +4022,36 @@ def render_scenario_tab(driver):
             report = None
             try:
                 previous_report = st.session_state.get(recall_report_key)
-                recall_items = parse_multi_query_recall_inputs(
-                    st.session_state[recall_question_key],
-                    st.session_state[recall_query_key],
-                    default_who=st.session_state[recall_who_key],
-                )
+                recall_items = parse_multi_query_recall_inputs(st.session_state[recall_question_key], st.session_state[recall_query_key], default_who=st.session_state[recall_who_key])
                 if not recall_items:
-                    st.error("当前没有解析出可执行的 query，请至少输入 1 个业务 query。")
+                    st.error("当前没有解析出可执行 query，请至少输入 1 条业务 query。")
                     recall_items = []
                 resume_report = None
                 if len(recall_items) == 1 and not (isinstance(previous_report, dict) and "reports" in previous_report):
                     item = recall_items[0]
-                    resume_report = previous_report if should_resume_recall(
-                        previous_report,
-                        item["question"],
-                        item["query"],
-                        item["who"],
-                    ) else None
-                with st.spinner("正在根据 3 份提示词执行模型召回与推理分析..."):
+                    resume_report = previous_report if should_resume_recall(previous_report, item["question"], item["query"], item["who"]) else None
+                with st.spinner("正在执行 3 轮以内的召回推理..."):
                     with temporary_api_env(recall_api_key, recall_base_url, recall_model, recall_model):
-                        controller = get_recall_controller(recall_model)
+                        controller = get_recall_controller(recall_model, recall_api_key, recall_base_url)
                         if len(recall_items) > 1:
-                            progress = st.progress(0, text="准备执行多 query 并行召回...")
-                            batch_reports = run_recall_items_parallel(
-                                controller,
-                                recall_items,
-                                max_rounds=int(st.session_state[recall_rounds_key]),
-                                max_workers=int(st.session_state[recall_workers_key]),
-                                progress=progress,
-                            )
+                            progress = st.progress(0, text="正在处理多 query 召回...")
+                            batch_reports = run_recall_items_parallel(controller, recall_items, max_rounds=int(st.session_state[recall_rounds_key]), max_workers=int(st.session_state[recall_workers_key]), progress=progress)
                             progress.empty()
-                            report = {
-                                "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "mode": "multi_query",
-                                "parallel_workers": min(
-                                    int(st.session_state[recall_workers_key]),
-                                    len(recall_items),
-                                    MAX_RECALL_PARALLEL_WORKERS,
-                                ),
-                                "reports": batch_reports,
-                            }
+                            report = {"generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "mode": "multi_query", "parallel_workers": min(int(st.session_state[recall_workers_key]), len(recall_items), MAX_RECALL_PARALLEL_WORKERS), "reports": batch_reports}
                         elif len(recall_items) == 1:
                             item = recall_items[0]
-                            report = run_recall_with_fallback(
-                                controller,
-                                question=item["question"],
-                                query=item["query"],
-                                who=item["who"],
-                                max_rounds=int(st.session_state[recall_rounds_key]),
-                                resume_report=resume_report,
-                            )
+                            report = run_recall_with_fallback(controller, question=item["question"], query=item["query"], who=item["who"], max_rounds=int(st.session_state[recall_rounds_key]), previous_report=resume_report)
+                if report:
+                    st.session_state[recall_report_key] = report
             except Exception as exc:
-                st.error(f"模型召回推理初始化失败：{exc}")
+                st.error(f"召回推理执行失败：{exc}")
 
-            if report is not None:
-                st.session_state[recall_report_key] = report
-
-    if recall_report_key in st.session_state:
-        stored_report = st.session_state[recall_report_key]
-        if isinstance(stored_report, dict) and "reports" in stored_report:
-            render_batch_recall_reports(stored_report)
+    recall_report = st.session_state.get(recall_report_key)
+    if recall_report:
+        if isinstance(recall_report, dict) and "reports" in recall_report:
+            render_batch_recall_reports(recall_report)
         else:
-            render_compliance_recall_report(stored_report)
+            render_compliance_recall_report(recall_report)
 
 
 def render_batch_recall_extension():
@@ -3234,7 +4120,7 @@ def render_batch_recall_extension():
                 try:
                     progress = st.progress(0, text="准备执行批量召回...")
                     with temporary_api_env(recall_api_key, recall_base_url, recall_model, recall_model):
-                        controller = get_recall_controller(recall_model)
+                        controller = get_recall_controller(recall_model, recall_api_key, recall_base_url)
                         batch_reports = run_recall_items_parallel(
                             controller,
                             batch_items,
@@ -3258,7 +4144,6 @@ def render_batch_recall_extension():
 
     if batch_report_key in st.session_state:
         render_batch_recall_reports(st.session_state[batch_report_key])
-
 
 def render_extraction_tab():
     st.subheader("法规抽取与图谱构建")
@@ -3306,14 +4191,15 @@ def render_extraction_tab():
 
         st.markdown("**抽取输入**")
         uploaded_files = st.file_uploader(
-            "上传 docx",
-            type=["docx"],
+            "上传 docx / pdf",
+            type=["docx", "pdf"],
             accept_multiple_files=True,
             key="extract_doc_uploads",
         )
+        st.caption("PDF 支持文本型 PDF；若是扫描版 PDF，会在本机已安装 Tesseract 且配置了 tessdata 时自动尝试 OCR。")
         if uploaded_files:
             if st.button("导入上传文件", key="extract_import_uploads", width="stretch"):
-                saved_names, skipped_names = save_uploaded_docx_files(uploaded_files)
+                saved_names, skipped_names = save_uploaded_source_files(uploaded_files)
                 selected_docs = st.session_state.get("extract_selected_docs", [])
                 st.session_state["extract_selected_docs"] = list(dict.fromkeys(selected_docs + saved_names))
                 st.session_state["extract_doc_input_mode"] = "勾选文档"
@@ -3322,7 +4208,7 @@ def render_extraction_tab():
                 if saved_names:
                     messages.append(f"已导入 {len(saved_names)} 个文档")
                 if skipped_names:
-                    messages.append(f"已跳过 {len(skipped_names)} 个非 docx 文件")
+                    messages.append(f"已跳过 {len(skipped_names)} 个非 docx/pdf 文件")
                 st.session_state["extract_upload_feedback"] = "；".join(messages) or "上传未产生新文档"
 
                 rerun = getattr(st, "rerun", None) or getattr(st, "experimental_rerun", None)
@@ -3440,6 +4326,12 @@ def render_extraction_tab():
                             output_name=phase1_output_name,
                             model=llm_model,
                             max_chunks_per_doc=int(max_chunks),
+                            api_config={
+                                "api_key": api_key,
+                                "base_url": base_url,
+                                "model": llm_model,
+                                "reasoning_model": reasoning_model,
+                            },
                         )
                 st.session_state["extract_phase1_summary"] = summarize_phase1_file(output_path)
                 remember_generated_artifact(output_path)
@@ -3460,6 +4352,12 @@ def render_extraction_tab():
                             output_name=atoms_output_name,
                             model=llm_model,
                             max_chunks_per_doc=int(max_chunks),
+                            api_config={
+                                "api_key": api_key,
+                                "base_url": base_url,
+                                "model": llm_model,
+                                "reasoning_model": reasoning_model,
+                            },
                         )
                 st.session_state["extract_atoms_summary"] = summarize_atoms_file(output_path)
                 remember_generated_artifact(output_path)
@@ -3489,15 +4387,20 @@ def render_extraction_tab():
                             heuristic_only=True,
                         )
                     else:
-                        with temporary_api_env(api_key, base_url, llm_model, reasoning_model):
-                            classified_df = classify_atoms(
-                                df,
-                                entries,
-                                model=reasoning_model or llm_model,
-                                batch_size=int(batch_size),
-                                force=force_classify,
-                                heuristic_only=False,
-                            )
+                        classified_df = classify_atoms(
+                            df,
+                            entries,
+                            model=reasoning_model or llm_model,
+                            batch_size=int(batch_size),
+                            force=force_classify,
+                            heuristic_only=False,
+                            api_config={
+                                "api_key": api_key,
+                                "base_url": base_url,
+                                "model": llm_model,
+                                "reasoning_model": reasoning_model,
+                            },
+                        )
                 output_path = PROCESSED_DIR / classified_output_name
                 classified_df.to_excel(output_path, index=False)
                 st.session_state["extract_classified_summary"] = summarize_classified_file(output_path)
@@ -3532,6 +4435,161 @@ def render_extraction_tab():
                 status_placeholder.success("Neo4j 图谱导入完成。")
             except Exception as exc:
                 status_placeholder.error(f"Neo4j 导入失败：{exc}")
+
+    mysql_sync_items, mysql_taxonomy_catalog_path = build_extraction_mysql_sync_items(
+        phase1_output_name=phase1_output_name,
+        atoms_output_name=atoms_output_name,
+        classified_output_name=classified_output_name,
+    )
+    with st.expander("\u540c\u6b65\u5230 MySQL", expanded=False):
+        st.caption("\u53ea\u540c\u6b65\u5f53\u524d\u5df2\u5b58\u5728\u7684\u62bd\u53d6/\u5206\u7c7b\u4ea7\u7269\uff0c\u9ed8\u8ba4\u5199\u5165 financial_compliance\u3002")
+        mysql_col1, mysql_col2, mysql_col3, mysql_col4, mysql_col5 = st.columns(5)
+        with mysql_col1:
+            mysql_host = st.text_input(
+                "MySQL Host",
+                key="extract_mysql_sync_host",
+                value=st.session_state.get("mysql_browser_host", "127.0.0.1"),
+            )
+        with mysql_col2:
+            mysql_port = st.number_input(
+                "MySQL Port",
+                key="extract_mysql_sync_port",
+                min_value=1,
+                max_value=65535,
+                value=int(st.session_state.get("mysql_browser_port", 3306)),
+                step=1,
+            )
+        with mysql_col3:
+            mysql_user = st.text_input(
+                "MySQL User",
+                key="extract_mysql_sync_user",
+                value=st.session_state.get("mysql_browser_user", "root"),
+            )
+        with mysql_col4:
+            mysql_password = st.text_input(
+                "MySQL Password",
+                key="extract_mysql_sync_password",
+                value=st.session_state.get("mysql_browser_password", "root"),
+                type="password",
+            )
+        with mysql_col5:
+            mysql_database = st.text_input(
+                "MySQL Database",
+                key="extract_mysql_sync_database",
+                value=st.session_state.get("mysql_browser_database", "financial_compliance"),
+            )
+
+        batch_col1, batch_col2 = st.columns([1.2, 0.8])
+        with batch_col1:
+            mysql_batch_label = st.text_input(
+                "\u6279\u6b21\u6807\u7b7e",
+                key="extract_mysql_sync_batch_label",
+                value="",
+                help="\u4e0d\u586b\u5219\u81ea\u52a8\u751f\u6210\u57fa\u4e8e\u65f6\u95f4\u7684\u6279\u6b21\u6807\u7b7e\u3002",
+            )
+        with batch_col2:
+            mysql_skip_existing = st.checkbox(
+                "\u5df2\u5b58\u5728\u65f6\u8df3\u8fc7",
+                key="extract_mysql_sync_skip_existing",
+                value=True,
+                help="\u6839\u636e\u6587\u4ef6\u8def\u5f84 + SHA1 \u53bb\u91cd\uff0c\u9ed8\u8ba4\u4e0d\u91cd\u590d\u5bfc\u5165\u3002",
+            )
+
+        mysql_notes = st.text_input(
+            "\u5907\u6ce8",
+            key="extract_mysql_sync_notes",
+            value="",
+        )
+
+        st.markdown("**\u672c\u6b21\u5f85\u540c\u6b65\u4ea7\u7269**")
+        if mysql_sync_items:
+            st.dataframe(
+                [
+                    {
+                        "\u4ea7\u7269\u7c7b\u578b": EXTRACTION_MYSQL_ARTIFACT_LABELS.get(artifact_type, artifact_type),
+                        "\u6587\u4ef6": path.name,
+                        "\u8def\u5f84": str(path),
+                    }
+                    for artifact_type, path in mysql_sync_items
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+        else:
+            st.info("\u5f53\u524d\u6ca1\u6709\u53ef\u540c\u6b65\u7684\u62bd\u53d6\u4ea7\u7269\u3002\u5148\u8fd0\u884c Phase1/2\uff0c\u539f\u5b50\u62bd\u53d6\u6216\u4e1a\u52a1\u5206\u7c7b\u3002")
+
+        sync_mysql_clicked = st.button(
+            "\u540c\u6b65\u5230 MySQL",
+            key="extract_sync_mysql",
+            width="stretch",
+            disabled=not mysql_sync_items,
+        )
+        mysql_status_placeholder = st.empty()
+
+    if sync_mysql_clicked:
+        if not mysql_sync_items:
+            mysql_status_placeholder.error("\u5f53\u524d\u6ca1\u6709\u53ef\u540c\u6b65\u7684\u62bd\u53d6\u4ea7\u7269\u3002")
+        else:
+            try:
+                mysql_url = build_mysql_browser_url(mysql_host, int(mysql_port), mysql_user, mysql_password, mysql_database)
+                store = MySQLTraceabilityStore(mysql_url)
+                store.ensure_schema()
+                batch_label = (mysql_batch_label or "").strip() or f"streamlit-extraction-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                mysql_status_placeholder.info("\u6b63\u5728\u540c\u6b65\u5f53\u524d\u4ea7\u7269\u5230 MySQL...")
+                with st.spinner("\u6b63\u5728\u5c06\u62bd\u53d6/\u5206\u7c7b\u4ea7\u7269\u5199\u5165 MySQL..."):
+                    results = sync_artifact_items(
+                        store=store,
+                        items=mysql_sync_items,
+                        batch_label=batch_label,
+                        notes=mysql_notes,
+                        taxonomy_catalog_path=mysql_taxonomy_catalog_path,
+                        skip_existing=mysql_skip_existing,
+                        source_dir=PROCESSED_DIR,
+                        batch_extra_json={
+                            "source": "streamlit_extraction_tab",
+                            "artifact_paths": [str(path) for _, path in mysql_sync_items],
+                            "doc_input_mode": st.session_state.get("extract_doc_input_mode"),
+                        },
+                        continue_on_error=True,
+                    )
+                sync_report = build_mysql_sync_report(results)
+                st.session_state["extract_mysql_sync_result"] = sync_report
+                st.session_state["mysql_browser_host"] = mysql_host
+                st.session_state["mysql_browser_port"] = int(mysql_port)
+                st.session_state["mysql_browser_user"] = mysql_user
+                st.session_state["mysql_browser_password"] = mysql_password
+                st.session_state["mysql_browser_database"] = mysql_database
+                if sync_report["failed_count"] > 0:
+                    mysql_status_placeholder.warning(
+                        f"\u540c\u6b65\u5b8c\u6210\uff0c\u6279\u6b21 {sync_report['batch_id']} \u4e2d\u6709 {sync_report['failed_count']} \u4e2a\u4ea7\u7269\u5931\u8d25\u3002"
+                    )
+                elif sync_report["imported_count"] == 0 and sync_report["skipped_count"] > 0:
+                    mysql_status_placeholder.info(
+                        f"\u540c\u6b65\u5b8c\u6210\uff0c\u6279\u6b21 {sync_report['batch_id']} \u4e2d\u6240\u6709\u4ea7\u7269\u5747\u5df2\u5b58\u5728\u5e76\u88ab\u8df3\u8fc7\u3002"
+                    )
+                else:
+                    mysql_status_placeholder.success(
+                        f"\u540c\u6b65\u5b8c\u6210\uff0c\u6279\u6b21\u53f7\uff1a{sync_report['batch_id']}"
+                    )
+            except Exception as exc:
+                st.session_state.pop("extract_mysql_sync_result", None)
+                mysql_status_placeholder.error(f"MySQL \u540c\u6b65\u5931\u8d25\uff1a{exc}")
+
+    mysql_sync_report = st.session_state.get("extract_mysql_sync_result")
+    if mysql_sync_report:
+        st.divider()
+        st.markdown("**MySQL \u540c\u6b65\u7ed3\u679c**")
+        st.markdown(f"**\u6279\u6b21\u53f7** `{mysql_sync_report.get('batch_id') or '-'}`")
+        metric1, metric2, metric3 = st.columns(3)
+        metric1.metric("\u5bfc\u5165\u4ea7\u7269", int(mysql_sync_report.get("imported_count", 0)))
+        metric2.metric("\u8df3\u8fc7\u4ea7\u7269", int(mysql_sync_report.get("skipped_count", 0)))
+        metric3.metric("\u5931\u8d25\u4ea7\u7269", int(mysql_sync_report.get("failed_count", 0)))
+        if int(mysql_sync_report.get("failed_count", 0)) > 0:
+            st.warning("\u672c\u6b21\u540c\u6b65\u5b58\u5728\u5931\u8d25\u9879\uff0c\u8bf7\u4f18\u5148\u68c0\u67e5\u4e0b\u65b9\u9519\u8bef\u5217\u3002")
+        st.markdown("**\u4ea7\u7269\u660e\u7ec6**")
+        st.dataframe(mysql_sync_report["result_df"], width="stretch", hide_index=True)
+        st.markdown("**\u5404\u8868\u5199\u5165\u6761\u6570**")
+        st.dataframe(mysql_sync_report["table_df"], width="stretch", hide_index=True)
 
     phase1_summary = st.session_state.get("extract_phase1_summary")
     if phase1_summary:
@@ -3584,28 +4642,684 @@ def render_extraction_tab():
         metric8.metric("场景命中", graph_stats.get("scene_matches", 0))
         metric9.metric("场景主体", graph_stats.get("scene_actors", 0))
 
+        metric10, metric11, metric12, metric13 = st.columns(4)
+        metric10.metric("Object 节点", graph_stats.get("objects", 0))
+        metric11.metric("时间节点", graph_stats.get("time_contexts", 0))
+        metric12.metric("对象关系", graph_stats.get("object_links", 0))
+        metric13.metric("时间关系", graph_stats.get("time_links", 0))
+
+
+def set_prompt_manager_feedback(message, level="success"):
+    st.session_state["prompt_manager_feedback"] = message
+    st.session_state["prompt_manager_feedback_level"] = level
+
+
+def handle_prompt_save(prompt_key, editor_key):
+    try:
+        override_path = save_prompt_override(prompt_key, st.session_state.get(editor_key, ""))
+        get_recall_controller.cache_clear()
+        st.session_state[editor_key] = load_prompt_text(prompt_key)
+        set_prompt_manager_feedback(f"已保存提示词覆盖：{override_path}")
+    except Exception as exc:
+        set_prompt_manager_feedback(f"保存失败：{exc}", level="error")
+
+
+def handle_prompt_reset(prompt_key, editor_key, title):
+    try:
+        existed = reset_prompt_override(prompt_key)
+        get_recall_controller.cache_clear()
+        st.session_state[editor_key] = load_prompt_text(prompt_key)
+        if existed:
+            set_prompt_manager_feedback(f"已恢复默认提示词：{title}")
+        else:
+            set_prompt_manager_feedback(f"{title} 当前本来就在使用默认提示词。", level="info")
+    except Exception as exc:
+        set_prompt_manager_feedback(f"恢复默认失败：{exc}", level="error")
+
+
+def handle_prompt_reload(prompt_key, editor_key, title):
+    try:
+        clear_prompt_template_cache()
+        get_recall_controller.cache_clear()
+        st.session_state[editor_key] = load_prompt_text(prompt_key)
+        set_prompt_manager_feedback(f"已重新载入磁盘中的提示词：{title}", level="info")
+    except Exception as exc:
+        set_prompt_manager_feedback(f"重新读取失败：{exc}", level="error")
+
+
+def render_prompt_management_group(group_key, records):
+    option_map = {f"{item['title']} | {item['key']}": item for item in records}
+    selected_label = st.selectbox(
+        "选择提示词",
+        options=list(option_map.keys()),
+        key=f"prompt_manager_select::{group_key}",
+    )
+    record = option_map[selected_label]
+
+    editor_key = f"prompt_editor::{record['key']}"
+    editor_version_key = f"prompt_editor_version::{record['key']}"
+    current_version = f"{record['active_source']}::{len(record['text'])}"
+    if st.session_state.get(editor_version_key) != current_version:
+        st.session_state[editor_key] = record["text"]
+        st.session_state[editor_version_key] = current_version
+
+    st.markdown(f"**{record['title']}**")
+    st.caption(record["description"])
+
+    meta_col1, meta_col2 = st.columns(2)
+    with meta_col1:
+        st.text_input(
+            "当前生效来源",
+            value=record["active_source"],
+            disabled=True,
+            key=f"prompt_active_source::{record['key']}",
+        )
+    with meta_col2:
+        st.text_input(
+            "覆盖文件路径",
+            value=record["override_path"],
+            disabled=True,
+            key=f"prompt_override_path::{record['key']}",
+        )
+
+    if record["placeholders"]:
+        placeholder_text = "、".join(f"{{{{ {name} }}}}" for name in record["placeholders"])
+        st.caption(f"需要保留的占位符：{placeholder_text}")
+    else:
+        st.caption("当前提示词没有必需占位符，可直接编辑纯文本内容。")
+
+    st.text_area("提示词内容", key=editor_key, height=420)
+
+    action_col1, action_col2, action_col3 = st.columns(3)
+    with action_col1:
+        st.button(
+            "保存覆盖版本",
+            key=f"prompt_save::{record['key']}",
+            width="stretch",
+            on_click=handle_prompt_save,
+            args=(record["key"], editor_key),
+        )
+    with action_col2:
+        st.button(
+            "恢复默认版本",
+            key=f"prompt_reset::{record['key']}",
+            width="stretch",
+            on_click=handle_prompt_reset,
+            args=(record["key"], editor_key, record["title"]),
+        )
+    with action_col3:
+        st.button(
+            "重新读取磁盘内容",
+            key=f"prompt_reload::{record['key']}",
+            width="stretch",
+            on_click=handle_prompt_reload,
+            args=(record["key"], editor_key, record["title"]),
+        )
+
+
+def render_prompt_management_tab():
+    st.subheader("提示词管理")
+    st.caption("这里可以直接查看和修改抽取链路、召回链路当前生效的提示词。保存后会写入 `data/prompt_overrides`，并对后续新发起的运行生效。")
+
+    feedback = st.session_state.pop("prompt_manager_feedback", "")
+    feedback_level = st.session_state.pop("prompt_manager_feedback_level", "success")
+    if feedback:
+        if feedback_level == "error":
+            st.error(feedback)
+        elif feedback_level == "info":
+            st.info(feedback)
+        else:
+            st.success(feedback)
+
+    records = list_prompt_records()
+    summary_df = pd.DataFrame(
+        [
+            {
+                "分组": item["group"],
+                "标题": item["title"],
+                "键": item["key"],
+                "当前来源": "覆盖版本" if item["is_override"] else "默认版本",
+                "占位符数量": len(item["placeholders"]),
+            }
+            for item in records
+        ]
+    )
+    st.dataframe(summary_df, width="stretch", hide_index=True)
+    st.info("基础 `.docx` 提示词默认直接读取 `data/raw`；一旦在这里保存，就会优先使用对应的 `.txt` 覆盖版本。")
+
+    extract_records = [item for item in records if item["group"] == "抽取链路"]
+    recall_records = [item for item in records if item["group"] == "召回/合规链路"]
+    extract_tab, recall_tab = st.tabs(["抽取链路", "召回/合规链路"])
+
+    with extract_tab:
+        render_prompt_management_group("extract", extract_records)
+
+    with recall_tab:
+        render_prompt_management_group("recall", recall_records)
+
+
+def render_mysql_browser_tab():
+    st.subheader("MySQL 链路浏览")
+
+    with st.expander("连接配置", expanded=True):
+        config_col1, config_col2, config_col3, config_col4 = st.columns(4)
+        with config_col1:
+            mysql_host = st.text_input("MySQL Host", key="mysql_browser_host", value="127.0.0.1")
+        with config_col2:
+            mysql_port = st.number_input("MySQL Port", key="mysql_browser_port", min_value=1, max_value=65535, value=3306, step=1)
+        with config_col3:
+            mysql_user = st.text_input("MySQL User", key="mysql_browser_user", value="root")
+        with config_col4:
+            mysql_password = st.text_input("MySQL Password", key="mysql_browser_password", value="root", type="password")
+        mysql_database = st.text_input("MySQL Database", key="mysql_browser_database", value="financial_compliance")
+
+    mysql_url = build_mysql_browser_url(mysql_host, int(mysql_port), mysql_user, mysql_password, mysql_database)
+
+    try:
+        tables = fetch_mysql_tables(mysql_url)
+    except Exception as exc:
+        st.error(f"MySQL 连接失败：{exc}")
+        return
+
+    if not tables:
+        st.warning("当前数据库中没有可浏览的数据表。")
+        return
+
+    metrics = fetch_mysql_metrics(mysql_url, tables)
+    metric1, metric2, metric3, metric4, metric5, metric6 = st.columns(6)
+    metric1.metric("批次", metrics["batch_count"])
+    metric2.metric("文件", metrics["artifact_count"])
+    metric3.metric("原子行", metrics["atom_count"])
+    metric4.metric("场景命中", metrics["scene_match_count"])
+    metric5.metric("召回查询", metrics["recall_query_count"])
+    metric6.metric("合规报告", metrics["compliance_report_count"])
+
+    batch_tab, artifact_tab, atom_tab, report_tab, table_tab = st.tabs(["批次", "产物", "Atom 追踪", "合规报告", "表浏览"])
+
+    with batch_tab:
+        batch_df = fetch_mysql_batches(mysql_url, limit=50)
+        st.dataframe(batch_df, width="stretch", hide_index=True)
+
+    with artifact_tab:
+        batch_df = fetch_mysql_batches(mysql_url, limit=50)
+        batch_options = ["全部"] + batch_df["batch_label"].astype(str).tolist() if not batch_df.empty else ["全部"]
+        selected_batch_label = st.selectbox("按批次筛选", options=batch_options, key="mysql_browser_batch_label")
+        artifact_type_df = query_mysql_df(mysql_url, "SELECT DISTINCT artifact_type FROM trace_artifacts ORDER BY artifact_type")
+        artifact_types = ["全部"] + artifact_type_df["artifact_type"].astype(str).tolist() if not artifact_type_df.empty else ["全部"]
+        selected_artifact_type = st.selectbox("按产物类型筛选", options=artifact_types, key="mysql_browser_artifact_type")
+
+        selected_batch_id = None
+        if selected_batch_label != "全部" and not batch_df.empty:
+            matched = batch_df[batch_df["batch_label"].astype(str) == selected_batch_label]
+            if not matched.empty:
+                selected_batch_id = str(matched.iloc[0]["batch_id"])
+
+        artifact_df = fetch_mysql_artifacts(mysql_url, limit=200, batch_id=selected_batch_id, artifact_type=selected_artifact_type)
+        st.dataframe(artifact_df, width="stretch", hide_index=True)
+
+        if not artifact_df.empty:
+            artifact_options = [f"{row['artifact_type']} | {row['artifact_name']} | {row['artifact_id']}" for _, row in artifact_df.iterrows()]
+            selected_artifact = st.selectbox("查看某个产物的明细", options=artifact_options, key="mysql_browser_artifact_pick")
+            selected_index = artifact_options.index(selected_artifact)
+            artifact_row = artifact_df.iloc[selected_index].to_dict()
+            payload_limit = st.slider("明细预览行数", min_value=10, max_value=300, value=100, step=10, key="mysql_browser_artifact_limit")
+            payloads = fetch_mysql_artifact_payloads(mysql_url, artifact_row, limit=payload_limit)
+            if payloads:
+                payload_tabs = st.tabs([name for name, _ in payloads])
+                for tab, (name, df) in zip(payload_tabs, payloads):
+                    with tab:
+                        st.dataframe(df, width="stretch", hide_index=True)
+            else:
+                st.info("当前产物没有可映射的明细表。")
+
+    with atom_tab:
+        atom_id = st.text_input("输入 atom_id", key="mysql_browser_atom_id", value="YZ-PSM-OBL-00001")
+        if atom_id.strip():
+            atom_rows, scene_rows = fetch_mysql_atom_trace(mysql_url, atom_id)
+            left_col, right_col = st.columns(2)
+            with left_col:
+                st.markdown("**Atom 版本记录**")
+                if atom_rows.empty:
+                    st.info("未找到该 atom_id。")
+                else:
+                    st.dataframe(atom_rows, width="stretch", hide_index=True)
+            with right_col:
+                st.markdown("**场景挂接**")
+                if scene_rows.empty:
+                    st.info("该 atom 当前没有场景挂接记录。")
+                else:
+                    st.dataframe(scene_rows, width="stretch", hide_index=True)
+
+    with report_tab:
+        report_df = fetch_mysql_report_list(mysql_url, limit=50)
+        st.dataframe(report_df, width="stretch", hide_index=True)
+        if not report_df.empty:
+            report_options = [f"{row['id']} | {row['final_decision']} | {str(row['question'])[:40]}" for _, row in report_df.iterrows()]
+            selected_report = st.selectbox("查看某份合规报告", options=report_options, key="mysql_browser_report_pick")
+            selected_index = report_options.index(selected_report)
+            report_id = int(report_df.iloc[selected_index]["id"])
+            report_detail_df, rounds_df = fetch_mysql_report_detail(mysql_url, report_id)
+
+            detail_col, rounds_col = st.columns([1, 1])
+            with detail_col:
+                st.markdown("**报告头信息**")
+                st.dataframe(report_detail_df.drop(columns=["report_json"], errors="ignore"), width="stretch", hide_index=True)
+                if not report_detail_df.empty:
+                    payload = parse_json_like(report_detail_df.iloc[0].get("report_json"))
+                    if payload is not None:
+                        st.markdown("**报告 JSON**")
+                        st.json(payload)
+            with rounds_col:
+                st.markdown("**逐轮推理**")
+                st.dataframe(rounds_df.drop(columns=["round_json"], errors="ignore"), width="stretch", hide_index=True)
+                if not rounds_df.empty:
+                    round_options = [f"Round {int(row['round_index'])}" for _, row in rounds_df.iterrows()]
+                    selected_round = st.selectbox("查看某一轮 JSON", options=round_options, key="mysql_browser_round_pick")
+                    round_index = round_options.index(selected_round)
+                    round_payload = parse_json_like(rounds_df.iloc[round_index].get("round_json"))
+                    if round_payload is not None:
+                        st.json(round_payload)
+
+    with table_tab:
+        selected_table = st.selectbox("选择表", options=tables, key="mysql_browser_table_name")
+        preview_limit = st.slider("表预览行数", min_value=10, max_value=300, value=100, step=10, key="mysql_browser_table_limit")
+        schema_df = fetch_mysql_table_schema(mysql_url, selected_table)
+        row_count = fetch_mysql_table_count(mysql_url, selected_table)
+        preview_df = fetch_mysql_table_preview(mysql_url, selected_table, limit=preview_limit)
+
+        top_col1, top_col2 = st.columns(2)
+        top_col1.metric("当前表总行数", row_count)
+        top_col2.metric("当前表字段数", len(schema_df))
+
+        schema_col, preview_col = st.columns([1, 2])
+        with schema_col:
+            st.markdown("**表结构**")
+            st.dataframe(schema_df, width="stretch", hide_index=True)
+        with preview_col:
+            st.markdown("**表预览**")
+            st.dataframe(preview_df, width="stretch", hide_index=True)
+
+
+def render_mysql_browser_tab_v2():
+    st.subheader("入库统计 / MySQL")
+    st.caption("默认使用本机 `financial_compliance`。多数情况下不需要修改连接参数。")
+
+    with st.expander("连接配置", expanded=False):
+        config_col1, config_col2, config_col3, config_col4 = st.columns(4)
+        with config_col1:
+            mysql_host = st.text_input("MySQL Host", key="mysql_browser_host", value="127.0.0.1")
+        with config_col2:
+            mysql_port = st.number_input("MySQL Port", key="mysql_browser_port", min_value=1, max_value=65535, value=3306, step=1)
+        with config_col3:
+            mysql_user = st.text_input("MySQL User", key="mysql_browser_user", value="root")
+        with config_col4:
+            mysql_password = st.text_input("MySQL Password", key="mysql_browser_password", value="root", type="password")
+        mysql_database = st.text_input("MySQL Database", key="mysql_browser_database", value="financial_compliance")
+
+    mysql_url = build_mysql_browser_url(mysql_host, int(mysql_port), mysql_user, mysql_password, mysql_database)
+
+    try:
+        tables = fetch_mysql_tables(mysql_url)
+        batch_df = fetch_mysql_batches(mysql_url, limit=50)
+    except Exception as exc:
+        st.error(f"MySQL 连接失败：{exc}")
+        return
+
+    if not tables:
+        st.warning("当前数据库中还没有可浏览的追踪表。")
+        return
+
+    metrics = fetch_mysql_metrics(mysql_url, tables)
+    metric1, metric2, metric3, metric4, metric5, metric6 = st.columns(6)
+    metric1.metric("批次数", metrics["batch_count"])
+    metric2.metric("产物数", metrics["artifact_count"])
+    metric3.metric("原子记录", metrics["atom_count"])
+    metric4.metric("场景命中", metrics["scene_match_count"])
+    metric5.metric("召回查询", metrics["recall_query_count"])
+    metric6.metric("合规报告", metrics["compliance_report_count"])
+
+    st.info("字段说明：批次表示一次同步入库；产物表示一个具体输出文件；页面中的批次标识和产物标识只显示短码，便于阅读，数据库中仍保留完整 ID。")
+
+    selected_batch_id = None
+    selected_batch_row = None
+    if not batch_df.empty:
+        batch_options = [
+            f"{row['batch_label']} | {build_short_id(row['batch_id'], 'BATCH')} | {row['created_at']}"
+            for _, row in batch_df.iterrows()
+        ]
+        selected_batch_option = st.selectbox("当前查看批次", options=batch_options, key="mysql_browser_selected_batch_label")
+        selected_batch_index = batch_options.index(selected_batch_option)
+        selected_batch_row = batch_df.iloc[selected_batch_index].to_dict()
+        selected_batch_id = str(selected_batch_row["batch_id"])
+
+    if selected_batch_row:
+        batch_summary = build_mysql_batch_business_summary(mysql_url, batch_id=selected_batch_id)
+        st.markdown("**当前批次摘要**")
+        summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
+        summary_col1.metric("批次名称", str(selected_batch_row.get("batch_label") or "-"))
+        summary_col2.metric("批次短码", build_short_id(selected_batch_row.get("batch_id"), "BATCH"))
+        summary_col3.metric("本批产物", int(selected_batch_row.get("artifact_count") or 0))
+        summary_col4.metric("写入记录", int(selected_batch_row.get("total_rows") or 0))
+        summary_col5.metric("来源法规数", batch_summary["document_count"])
+
+        biz_col1, biz_col2, biz_col3, biz_col4, biz_col5 = st.columns(5)
+        biz_col1.metric("分类原子", batch_summary["classified_atom_count"])
+        biz_col2.metric("已命中类目原子", batch_summary["labelled_atom_count"])
+        biz_col3.metric("覆盖业务模块", batch_summary["module_count"])
+        biz_col4.metric("覆盖场景数", batch_summary["scene_count"])
+        biz_col5.metric("平均每原子从属类目", batch_summary["avg_labels_per_atom"])
+
+        extra_col1, extra_col2 = st.columns(2)
+        extra_col1.metric("多归属原子", batch_summary["multi_label_atom_count"])
+        extra_col2.markdown(f"**导入时间**  \n{selected_batch_row.get('created_at') or '-'}")
+
+        if not batch_summary["module_df"].empty or not batch_summary["rule_type_df"].empty:
+            left_col, right_col = st.columns(2)
+            with left_col:
+                st.markdown("**模块覆盖 Top20**")
+                st.dataframe(batch_summary["module_df"], width="stretch", hide_index=True)
+            with right_col:
+                st.markdown("**规则类型分布**")
+                st.dataframe(batch_summary["rule_type_df"], width="stretch", hide_index=True)
+        if not batch_summary["scene_df"].empty:
+            st.markdown("**场景命中 Top20**")
+            st.dataframe(batch_summary["scene_df"], width="stretch", hide_index=True)
+
+    overview_tab, artifact_tab, atom_tab, report_tab, table_tab = st.tabs(["批次概览", "产物明细", "Atom 追踪", "合规报告", "表浏览"])
+
+    with overview_tab:
+        st.dataframe(prettify_batch_df(batch_df), width="stretch", hide_index=True)
+
+    with artifact_tab:
+        artifact_type_df = query_mysql_df(mysql_url, "SELECT DISTINCT artifact_type FROM trace_artifacts ORDER BY artifact_type")
+        artifact_types = ["全部"] + artifact_type_df["artifact_type"].astype(str).tolist() if not artifact_type_df.empty else ["全部"]
+        filter_col1, filter_col2 = st.columns([1.2, 1])
+        with filter_col1:
+            current_batch_only = st.checkbox("只看当前批次", value=True, key="mysql_browser_current_batch_only")
+        with filter_col2:
+            selected_artifact_type = st.selectbox("按产物类型筛选", options=artifact_types, key="mysql_browser_artifact_type_v2")
+
+        artifact_df = fetch_mysql_artifacts(
+            mysql_url,
+            limit=200,
+            batch_id=selected_batch_id if current_batch_only else None,
+            artifact_type=selected_artifact_type,
+        )
+        st.dataframe(prettify_artifact_df(artifact_df), width="stretch", hide_index=True)
+
+        if not artifact_df.empty:
+            artifact_labels = [
+                f"{EXTRACTION_MYSQL_ARTIFACT_LABELS.get(str(row['artifact_type']), str(row['artifact_type']))} | {row['artifact_name']} | {build_short_id(row['artifact_id'], 'ART')}"
+                for _, row in artifact_df.iterrows()
+            ]
+            selected_artifact_label = st.selectbox("查看某个产物的入库明细", options=artifact_labels, key="mysql_browser_artifact_pick_v2")
+            selected_index = artifact_labels.index(selected_artifact_label)
+            artifact_row = artifact_df.iloc[selected_index].to_dict()
+            payload_limit = st.slider("明细预览行数", min_value=10, max_value=300, value=100, step=10, key="mysql_browser_artifact_limit_v2")
+            payloads = fetch_mysql_artifact_payloads(mysql_url, artifact_row, limit=payload_limit)
+            if payloads:
+                payload_tabs = st.tabs([name for name, _ in payloads])
+                for tab, (name, df) in zip(payload_tabs, payloads):
+                    with tab:
+                        st.dataframe(shorten_identifier_columns(df), width="stretch", hide_index=True)
+            else:
+                st.info("当前产物没有可映射的明细表。")
+
+    with atom_tab:
+        atom_id = st.text_input("输入 atom_id", key="mysql_browser_atom_id_v2", value="YZ-PSM-OBL-00001")
+        if atom_id.strip():
+            atom_rows, scene_rows = fetch_mysql_atom_trace(mysql_url, atom_id)
+            atom_display_df, scene_display_df = prettify_atom_trace_df(atom_rows, scene_rows)
+            left_col, right_col = st.columns(2)
+            with left_col:
+                st.markdown("**Atom 版本记录**")
+                if atom_display_df.empty:
+                    st.info("未找到该 atom_id。")
+                else:
+                    st.dataframe(atom_display_df, width="stretch", hide_index=True)
+            with right_col:
+                st.markdown("**场景挂接**")
+                if scene_display_df.empty:
+                    st.info("该 atom 当前没有场景挂接记录。")
+                else:
+                    st.dataframe(scene_display_df, width="stretch", hide_index=True)
+
+    with report_tab:
+        report_df = fetch_mysql_report_list(mysql_url, limit=50)
+        report_display_df = prettify_report_df(report_df)
+        st.dataframe(report_display_df, width="stretch", hide_index=True)
+        if not report_df.empty:
+            report_options = [
+                f"{int(row['id'])} | {row['final_decision']} | {str(row['question'])[:40]}"
+                for _, row in report_df.iterrows()
+            ]
+            selected_report = st.selectbox("查看某份合规报告", options=report_options, key="mysql_browser_report_pick_v2")
+            selected_index = report_options.index(selected_report)
+            report_id = int(report_df.iloc[selected_index]["id"])
+            report_detail_df, rounds_df = fetch_mysql_report_detail(mysql_url, report_id)
+
+            detail_col, rounds_col = st.columns([1, 1])
+            with detail_col:
+                st.markdown("**报告头信息**")
+                head_df = report_detail_df.drop(columns=["report_json"], errors="ignore").rename(
+                    columns={
+                        "id": "报告编号",
+                        "artifact_id": "产物标识",
+                        "question": "问题",
+                        "raw_query": "原始查询",
+                        "final_decision": "最终结论",
+                        "judge_final_decision": "判断结论",
+                        "stop_reason": "停止原因",
+                        "can_make_final_compliance_judgement": "是否可形成最终判断",
+                        "final_recall_atom_count": "最终证据数",
+                    }
+                )
+                st.dataframe(shorten_identifier_columns(head_df), width="stretch", hide_index=True)
+                if not report_detail_df.empty:
+                    payload = parse_json_like(report_detail_df.iloc[0].get("report_json"))
+                    if payload is not None:
+                        st.markdown("**报告 JSON**")
+                        st.json(payload)
+            with rounds_col:
+                st.markdown("**逐轮推理**")
+                rounds_display_df = rounds_df.drop(columns=["round_json"], errors="ignore").rename(
+                    columns={
+                        "round_index": "轮次",
+                        "input_atom_count": "输入原子数",
+                        "output_atom_count": "输出原子数",
+                        "new_atom_count": "新增原子数",
+                    }
+                )
+                st.dataframe(rounds_display_df, width="stretch", hide_index=True)
+                if not rounds_df.empty:
+                    round_options = [f"Round {int(row['round_index'])}" for _, row in rounds_df.iterrows()]
+                    selected_round = st.selectbox("查看某一轮 JSON", options=round_options, key="mysql_browser_round_pick_v2")
+                    round_index = round_options.index(selected_round)
+                    round_payload = parse_json_like(rounds_df.iloc[round_index].get("round_json"))
+                    if round_payload is not None:
+                        st.json(round_payload)
+
+    with table_tab:
+        selected_table = st.selectbox("选择表", options=tables, key="mysql_browser_table_name_v2")
+        preview_limit = st.slider("表预览行数", min_value=10, max_value=300, value=100, step=10, key="mysql_browser_table_limit_v2")
+        schema_df = fetch_mysql_table_schema(mysql_url, selected_table)
+        row_count = fetch_mysql_table_count(mysql_url, selected_table)
+        preview_df = shorten_identifier_columns(fetch_mysql_table_preview(mysql_url, selected_table, limit=preview_limit))
+
+        top_col1, top_col2 = st.columns(2)
+        top_col1.metric("当前表总行数", row_count)
+        top_col2.metric("当前字段数", len(schema_df))
+
+        schema_col, preview_col = st.columns([1, 2])
+        with schema_col:
+            st.markdown("**表结构**")
+            st.dataframe(schema_df, width="stretch", hide_index=True)
+        with preview_col:
+            st.markdown("**表预览**")
+            st.dataframe(preview_df, width="stretch", hide_index=True)
+
+
+def render_conflict_detection_tab():
+    st.subheader("冲突检测")
+    st.caption("第一版采用启发式扫描，只抓两类疑似冲突：禁止/允许并存、阈值口径不一致。结果用于人工复核，不直接作为法规结论。")
+
+    source_mode = st.radio(
+        "数据来源",
+        options=["当前业务分类文件", "MySQL 已入库批次"],
+        key="conflict_detection_source_mode",
+        horizontal=True,
+    )
+
+    run_clicked = False
+    source_label = ""
+    source_df = pd.DataFrame()
+
+    if source_mode == "当前业务分类文件":
+        default_name = st.session_state.get("extract_classified_output", "legal_atoms_business_taxonomy.xlsx")
+        local_path = resolve_extraction_output_path("extract_classified_summary", default_name) or (PROCESSED_DIR / default_name)
+        source_label = str(local_path)
+        st.markdown(f"**当前文件** `{local_path}`")
+        run_clicked = st.button("运行冲突扫描", key="conflict_detection_run_local", width="stretch")
+        if run_clicked:
+            if not local_path.exists():
+                st.session_state.pop("conflict_detection_result", None)
+                st.error(f"未找到业务分类结果文件：{local_path}")
+                return
+            source_df = pd.read_excel(local_path).fillna("")
+    else:
+        mysql_host = st.session_state.get("mysql_browser_host", "127.0.0.1")
+        mysql_port = int(st.session_state.get("mysql_browser_port", 3306))
+        mysql_user = st.session_state.get("mysql_browser_user", "root")
+        mysql_password = st.session_state.get("mysql_browser_password", "root")
+        mysql_database = st.session_state.get("mysql_browser_database", "financial_compliance")
+        mysql_url = build_mysql_browser_url(mysql_host, mysql_port, mysql_user, mysql_password, mysql_database)
+        st.markdown(f"**当前 MySQL** `{mysql_host}:{mysql_port}/{mysql_database}`")
+        try:
+            mysql_batch_df = fetch_mysql_batches(mysql_url, limit=50)
+        except Exception as exc:
+            st.error(f"MySQL 连接失败：{exc}")
+            return
+        if mysql_batch_df.empty:
+            st.info("当前 MySQL 中还没有可用于冲突检测的批次。")
+            return
+        batch_options = [
+            f"{row['batch_label']} | {build_short_id(row['batch_id'], 'BATCH')} | {row['created_at']}"
+            for _, row in mysql_batch_df.iterrows()
+        ]
+        selected_batch_option = st.selectbox("选择已入库批次", options=batch_options, key="conflict_detection_batch_label")
+        selected_batch_index = batch_options.index(selected_batch_option)
+        selected_batch_id = str(mysql_batch_df.iloc[selected_batch_index]["batch_id"])
+        source_label = selected_batch_option
+        run_clicked = st.button("扫描所选批次", key="conflict_detection_run_mysql", width="stretch")
+        if run_clicked:
+            source_df = fetch_mysql_classified_atoms(mysql_url, batch_id=selected_batch_id).fillna("")
+            if source_df.empty:
+                st.session_state.pop("conflict_detection_result", None)
+                st.warning("该批次中没有 `classified_atoms` 数据，暂时无法执行冲突检测。")
+                return
+
+    if run_clicked:
+        with st.spinner("正在执行冲突检测..."):
+            result = detect_atom_conflicts(source_df)
+        result["source_mode"] = source_mode
+        result["source_label"] = source_label
+        st.session_state["conflict_detection_result"] = result
+
+    conflict_result = st.session_state.get("conflict_detection_result")
+    if not conflict_result:
+        st.info("选择数据源后运行一次冲突扫描，结果会显示在这里。")
+        return
+
+    st.markdown("**本次扫描对象**")
+    st.write(conflict_result.get("source_label") or "-")
+
+    summary = conflict_result.get("summary") or {}
+    metric1, metric2, metric3, metric4 = st.columns(4)
+    metric1.metric("冲突组数", int(summary.get("group_count", 0)))
+    metric2.metric("高风险组", int(summary.get("high_count", 0)))
+    metric3.metric("中风险组", int(summary.get("medium_count", 0)))
+    metric4.metric("涉及原子", int(summary.get("affected_atom_count", 0)))
+
+    group_df = conflict_result.get("group_df")
+    detail_df = conflict_result.get("detail_df")
+    if group_df is None or group_df.empty:
+        st.success("当前扫描范围内未发现启发式冲突。")
+        return
+
+    st.markdown("**冲突分组**")
+    st.dataframe(group_df, width="stretch", hide_index=True)
+    st.markdown("**涉及原子明细**")
+    st.dataframe(detail_df, width="stretch", hide_index=True)
+
 
 def main():
-    st.set_page_config(page_title="金融法规模型召回推理", layout="wide")
-    st.title("金融法规模型召回推理")
+    st.set_page_config(page_title="\u91d1\u878d\u6cd5\u89c4\u6a21\u578b\u53ec\u56de\u63a8\u7406", layout="wide")
+    st.title("\u91d1\u878d\u6cd5\u89c4\u6a21\u578b\u53ec\u56de\u63a8\u7406")
 
-    driver = get_driver()
-    extraction_tab, checklist_tab, overview_tab, browse_tab, scenario_tab = st.tabs(["抽取与构建", "人工核查清单", "分类概览", "图谱浏览", "模型推理演示"])
+    with st.sidebar.expander("Neo4j 连接", expanded=False):
+        neo4j_uri = st.text_input("URI", key="global_neo4j_uri", value=URI)
+        neo4j_user = st.text_input("用户名", key="global_neo4j_user", value=AUTH[0])
+        neo4j_password = st.text_input("密码", key="global_neo4j_password", value=AUTH[1], type="password")
+        st.caption("也可以在本地 `qwen.env` 中设置 `NEO4J_URI`、`NEO4J_USER`、`NEO4J_PASSWORD`。")
+
+    driver = get_driver(neo4j_uri, neo4j_user, neo4j_password)
+    neo4j_ready, neo4j_message = check_neo4j_connection(driver)
+    extraction_tab, prompt_tab, checklist_tab, mysql_tab, conflict_tab, overview_tab, browse_tab, scenario_tab = st.tabs(
+        [
+            "\u62bd\u53d6\u4e0e\u6784\u5efa",
+            "\u63d0\u793a\u8bcd\u7ba1\u7406",
+            "\u4eba\u5de5\u6838\u67e5\u6e05\u5355",
+            "\u5165\u5e93\u7edf\u8ba1 / MySQL",
+            "\u51b2\u7a81\u68c0\u6d4b",
+            "\u5206\u7c7b\u6982\u89c8",
+            "\u56fe\u8c31\u6d4f\u89c8",
+            "\u6a21\u578b\u63a8\u7406\u6f14\u793a",
+        ]
+    )
 
     with extraction_tab:
         render_extraction_tab()
 
+    with prompt_tab:
+        render_prompt_management_tab()
+
     with checklist_tab:
-        render_checklist_tab(driver)
+        if driver is None:
+            render_neo4j_unconfigured_message()
+        elif not neo4j_ready:
+            render_neo4j_connection_error(neo4j_message)
+        else:
+            render_checklist_tab(driver)
+
+    with mysql_tab:
+        render_mysql_browser_tab_v2()
+
+    with conflict_tab:
+        render_conflict_detection_tab()
 
     with overview_tab:
-        render_category_overview_tab(driver)
+        if driver is None:
+            render_neo4j_unconfigured_message()
+        elif not neo4j_ready:
+            render_neo4j_connection_error(neo4j_message)
+        else:
+            render_category_overview_tab(driver)
 
     with browse_tab:
-        render_browser_tab(driver)
+        if driver is None:
+            render_neo4j_unconfigured_message()
+        elif not neo4j_ready:
+            render_neo4j_connection_error(neo4j_message)
+        else:
+            render_browser_tab(driver)
 
     with scenario_tab:
-        render_scenario_tab(driver)
+        if driver is None:
+            render_neo4j_unconfigured_message()
+        elif not neo4j_ready:
+            render_neo4j_connection_error(neo4j_message)
+        else:
+            render_scenario_tab(driver)
         render_batch_recall_extension()
 
 

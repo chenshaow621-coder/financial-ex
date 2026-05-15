@@ -8,6 +8,7 @@ from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 
 from main import run_pipeline
+from neo4j_config import DEFAULT_NEO4J_URI, DEFAULT_NEO4J_USER, get_neo4j_password
 from qwen_client import get_default_model
 from reference_rule_pipeline import build_catalog, demo_payload, overlap_score, run_check, save_build
 
@@ -60,7 +61,10 @@ def build_sample_links(atom_df, align_df, threshold=0.45):
     return links
 
 
-def load_to_neo4j(atom_file, clear_first=False, uri="bolt://localhost:7687", user="neo4j", password="123456"):
+def load_to_neo4j(atom_file, clear_first=False, uri=None, user=None, password=None):
+    uri = uri or DEFAULT_NEO4J_URI
+    user = user or DEFAULT_NEO4J_USER
+    password = password if password is not None else get_neo4j_password()
     ensure_reference_outputs()
     atom_df = pd.read_excel(atom_file).fillna("")
     rule_df = pd.read_excel(RULE_FILE).fillna("")
@@ -189,7 +193,10 @@ def load_to_neo4j(atom_file, clear_first=False, uri="bolt://localhost:7687", use
     return {"atom_count": len(atom_df), "rule_count": len(rule_df), "link_count": len(links)}
 
 
-def save_report_to_neo4j(report, uri="bolt://localhost:7687", user="neo4j", password="123456"):
+def save_report_to_neo4j(report, uri=None, user=None, password=None):
+    uri = uri or DEFAULT_NEO4J_URI
+    user = user or DEFAULT_NEO4J_USER
+    password = password if password is not None else get_neo4j_password()
     run_id = datetime.now().strftime("RUN-%Y%m%d-%H%M%S")
     driver = GraphDatabase.driver(uri, auth=(user, password))
     try:
@@ -287,9 +294,9 @@ def build_parser():
     parser.add_argument("--payload", help="Optional compliance payload JSON path.")
     parser.add_argument("--skip-neo4j", action="store_true")
     parser.add_argument("--clear-neo4j", action="store_true")
-    parser.add_argument("--neo4j-uri", default="bolt://localhost:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="123456")
+    parser.add_argument("--neo4j-uri", default=DEFAULT_NEO4J_URI)
+    parser.add_argument("--neo4j-user", default=DEFAULT_NEO4J_USER)
+    parser.add_argument("--neo4j-password", default=get_neo4j_password())
     return parser
 
 

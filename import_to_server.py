@@ -1,15 +1,18 @@
 from neo4j import GraphDatabase
 from neo4j_backup import Importer
 
-if __name__ == "__main__":
-    # ========== 请修改为外部服务器的连接信息 ==========
-    uri = "bolt://172.1.2.232:7687"       # 例如 bolt://192.168.1.100:7687
-    username = "neo4j"                  # 外部服务器的用户名
-    password = "Sunyard000"        # 替换为真实密码
-    database = "neo4j"                  # 目标数据库名，通常是 neo4j
-    # ===============================================
+from src.neo4j_config import (
+    DEFAULT_NEO4J_DATABASE,
+    get_neo4j_config,
+    get_neo4j_encrypted,
+    require_neo4j_password,
+)
 
-    encrypted = False  # 本地或内网连接一般填 False
+if __name__ == "__main__":
+    uri, username, password = get_neo4j_config()
+    password = require_neo4j_password(password)
+    database = DEFAULT_NEO4J_DATABASE
+    encrypted = get_neo4j_encrypted(default=False)
 
     # 建立驱动连接
     driver = GraphDatabase.driver(uri, auth=(username, password), encrypted=encrypted)

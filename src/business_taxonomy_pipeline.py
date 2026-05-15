@@ -4,6 +4,7 @@ import json
 import re
 import time
 from collections import defaultdict
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
@@ -14,9 +15,20 @@ from docx.text.paragraph import Paragraph
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 
-from data_loader import clean_text, iter_block_items, load_and_chunk_docx
+from data_loader import clean_text, iter_block_items, load_and_chunk_document
 from dictionary_builder import build_entity_dictionary
+from entity_normalization import (
+    extract_normalized_actor_names,
+    extract_normalized_actor_records,
+    extract_normalized_object_names,
+    extract_normalized_object_records,
+    extract_normalized_time_names,
+    extract_normalized_time_records,
+    load_reference_terms,
+)
 from main import extract_3stage_with_retry, flatten_atom_rows, resolve_entity_dict_path
+from mysql_traceability import add_mysql_sync_args, maybe_sync_artifacts_from_args
+from neo4j_config import DEFAULT_NEO4J_URI, DEFAULT_NEO4J_USER, get_neo4j_password
 from qwen_client import call_qwen, get_reasoning_model
 
 
@@ -118,6 +130,22 @@ def load_who_dictionary_terms() -> tuple[str, ...]:
     return tuple(cleaned)
 
 
+@lru_cache(maxsize=1)
+def load_what_dictionary_terms() -> tuple[str, ...]:
+    try:
+        return load_reference_terms(str(resolve_entity_dict_path()), group_key="WHAT")
+    except Exception:
+        return tuple()
+
+
+@lru_cache(maxsize=1)
+def load_when_dictionary_terms() -> tuple[str, ...]:
+    try:
+        return load_reference_terms(str(resolve_entity_dict_path()), group_key="WHEN")
+    except Exception:
+        return tuple()
+
+
 def extract_who_terms(who_text: str) -> list[str]:
     normalized = clean_text(str(who_text or "")).strip()
     if not normalized or normalized.lower() == "nan" or normalized in {"未指定", "None", "null"}:
@@ -133,6 +161,120 @@ def extract_who_terms(who_text: str) -> list[str]:
             dictionary_matches.append(term)
 
     return dedupe_keep_order(fragments + dictionary_matches)[:20]
+
+
+def extract_what_terms(what_text: str) -> list[str]:
+    normalized = clean_text(str(what_text or "")).strip()
+    if not normalized or normalized.lower() == "nan" or normalized in {"未指定", "None", "null"}:
+        return []
+
+    fragments = split_label_terms(normalized)
+    if normalized not in fragments and len(normalized) <= 30 and not any(sep in normalized for sep in ("；", ";", "、")):
+        fragments.insert(0, normalized)
+
+    dictionary_matches = []
+    for term in load_what_dictionary_terms():
+        if term and term in normalized:
+            dictionary_matches.append(term)
+
+    filtered = []
+    for term in dedupe_keep_order(dictionary_matches + fragments):
+        value = clean_text(str(term or "")).strip()
+        if not value:
+            continue
+        if len(value) <= 1:
+            continue
+        if len(value) == 2 and value not in {"支票", "本票", "汇票", "票据", "现金"}:
+            continue
+        if any(sep in value for sep in ("；", ";")):
+            continue
+        filtered.append(value)
+    return filtered[:20]
+
+
+def extract_when_terms(when_text: str) -> list[str]:
+    normalized = clean_text(str(when_text or "")).strip()
+    if not normalized or normalized.lower() == "nan" or normalized in {"未指定", "None", "null"}:
+        return []
+
+    fragments = split_label_terms(normalized)
+    if normalized not in fragments and len(normalized) <= 28 and not any(sep in normalized for sep in ("；", ";", "、", "，", ",")):
+        fragments.insert(0, normalized)
+
+    dictionary_matches = []
+    for term in load_when_dictionary_terms():
+        if term and term in normalized:
+            dictionary_matches.append(term)
+
+    filtered = []
+    for term in dedupe_keep_order(dictionary_matches + fragments):
+        value = clean_text(str(term or "")).strip()
+        if not value:
+            continue
+        if any(sep in value for sep in ("；", ";", "、", "，", ",")):
+            continue
+        if len(value) <= 2 and value not in {"当日", "次日", "每日", "每月", "每年"}:
+            continue
+        if not (
+            value.endswith(("时", "前", "后", "期间", "期内", "以内", "之内", "之前", "之后"))
+            or re.search(r"\d", value)
+            or "日起" in value
+            or "期限" in value
+            or "当日" in value
+            or "次日" in value
+            or value.startswith("每")
+        ):
+            continue
+        filtered.append(value)
+    return filtered[:15]
+
+
+def extract_actor_graph_records(who_text: str) -> list[dict]:
+    raw_terms = extract_who_terms(who_text)
+    normalized = clean_text(str(who_text or "")).strip()
+    if len(raw_terms) > 1 and raw_terms and raw_terms[0] == normalized:
+        raw_terms = raw_terms[1:]
+    return extract_normalized_actor_records(who_text, raw_terms=raw_terms)
+
+
+def extract_object_graph_records(what_text: str) -> list[dict]:
+    raw_terms = extract_what_terms(what_text)
+    normalized = clean_text(str(what_text or "")).strip()
+    if len(raw_terms) > 1 and raw_terms and raw_terms[0] == normalized:
+        raw_terms = raw_terms[1:]
+    return extract_normalized_object_records(what_text, raw_terms=raw_terms)
+
+
+def extract_time_graph_records(when_text: str) -> list[dict]:
+    raw_terms = extract_when_terms(when_text)
+    normalized = clean_text(str(when_text or "")).strip()
+    if len(raw_terms) > 1 and raw_terms and raw_terms[0] == normalized:
+        raw_terms = raw_terms[1:]
+    return extract_normalized_time_records(when_text, raw_terms=raw_terms)
+
+
+def extract_normalized_who_terms(who_text: str) -> list[str]:
+    raw_terms = extract_who_terms(who_text)
+    normalized = clean_text(str(who_text or "")).strip()
+    if len(raw_terms) > 1 and raw_terms and raw_terms[0] == normalized:
+        raw_terms = raw_terms[1:]
+    return extract_normalized_actor_names(who_text, raw_terms=raw_terms)
+
+
+def extract_normalized_what_terms(what_text: str) -> list[str]:
+    raw_terms = extract_what_terms(what_text)
+    normalized = clean_text(str(what_text or "")).strip()
+    if len(raw_terms) > 1 and raw_terms and raw_terms[0] == normalized:
+        raw_terms = raw_terms[1:]
+    return extract_normalized_object_names(what_text, raw_terms=raw_terms)
+
+
+def extract_normalized_when_terms(when_text: str) -> list[str]:
+    raw_terms = extract_when_terms(when_text)
+    normalized = clean_text(str(when_text or "")).strip()
+    if len(raw_terms) > 1 and raw_terms and raw_terms[0] == normalized:
+        raw_terms = raw_terms[1:]
+    return extract_normalized_time_names(when_text, raw_terms=raw_terms)
 
 
 def strip_category_prefix(text: str) -> str:
@@ -337,12 +479,13 @@ def read_atoms(path: Path) -> pd.DataFrame:
 
 def collect_legal_docs_for_full_extract(taxonomy_doc: Path) -> list[Path]:
     docs = []
-    for path in RAW_DIR.glob("*.docx"):
-        if path.name.startswith("~$"):
-            continue
-        if path == taxonomy_doc:
-            continue
-        docs.append(path)
+    for pattern in ("*.docx", "*.pdf"):
+        for path in RAW_DIR.glob(pattern):
+            if path.name.startswith("~$"):
+                continue
+            if path == taxonomy_doc:
+                continue
+            docs.append(path)
     return sorted(docs)
 
 
@@ -355,7 +498,7 @@ def run_full_extract(output_path: Path, taxonomy_doc: Path, model: str | None = 
 
     for path in docs:
         print(f"Processing {path.name}")
-        chunks = load_and_chunk_docx(str(path))
+        chunks = load_and_chunk_document(str(path))
         if max_chunks_per_doc and max_chunks_per_doc > 0:
             chunks = chunks[:max_chunks_per_doc]
         for index, chunk in enumerate(chunks, 1):
@@ -446,14 +589,21 @@ def resolve_codes(raw_item: dict, code_to_entry: dict[str, dict], path_to_code: 
     return resolved[:3] if resolved else [UNCLASSIFIED_CODE]
 
 
-def classify_batch(batch_rows: list[dict], taxonomy_text: str, code_to_entry: dict[str, dict], model: str, max_retries: int = 3) -> dict:
+def classify_batch(
+    batch_rows: list[dict],
+    taxonomy_text: str,
+    code_to_entry: dict[str, dict],
+    model: str,
+    max_retries: int = 3,
+    api_config: dict | None = None,
+) -> dict:
     atom_ids = [row["atom_id"] for row in batch_rows]
     path_to_code = {normalize_path(entry["label_path"]): entry["code"] for entry in code_to_entry.values()}
 
     for attempt in range(1, max_retries + 1):
         try:
             prompt = build_classification_prompt(batch_rows, taxonomy_text)
-            response = call_qwen(prompt, model=model, timeout=600)
+            response = call_qwen(prompt, model=model, timeout=600, api_config=api_config)
             payload = json.loads(clean_json_string(response))
             items = extract_result_items(payload)
             result_map = {}
@@ -585,6 +735,7 @@ def classify_atoms(
     batch_size: int = 12,
     force: bool = False,
     heuristic_only: bool = False,
+    api_config: dict | None = None,
 ) -> pd.DataFrame:
     code_to_entry = {entry["code"]: entry for entry in entries}
     taxonomy_text = taxonomy_prompt_text(entries)
@@ -606,7 +757,7 @@ def classify_atoms(
         for idx, batch_df in enumerate(batches, 1):
             batch_rows = build_batch_rows(batch_df)
             print(f"  - Classifying batch {idx}/{len(batches)} ({len(batch_rows)} atoms)")
-            batch_result = classify_batch(batch_rows, taxonomy_text, code_to_entry, model_name)
+            batch_result = classify_batch(batch_rows, taxonomy_text, code_to_entry, model_name, api_config=api_config)
             result_map.update(batch_result)
             save_checkpoint(
                 DEFAULT_CHECKPOINT_JSON,
@@ -770,7 +921,7 @@ def build_scene_actor_rows(df: pd.DataFrame, scene_match_rows: list[dict]) -> li
     for _, row in df.iterrows():
         atom_id = str(row.get("atom_id", "")).strip()
         if atom_id:
-            who_terms_by_atom[atom_id] = extract_who_terms(row.get("who", ""))
+            who_terms_by_atom[atom_id] = extract_normalized_who_terms(row.get("who", ""))
 
     counter = defaultdict(int)
     for row in scene_match_rows:
@@ -789,10 +940,60 @@ def build_scene_actor_rows(df: pd.DataFrame, scene_match_rows: list[dict]) -> li
     ]
 
 
+def build_scene_object_rows(df: pd.DataFrame, scene_match_rows: list[dict]) -> list[dict]:
+    object_terms_by_atom = {}
+    for _, row in df.iterrows():
+        atom_id = str(row.get("atom_id", "")).strip()
+        if atom_id:
+            object_terms_by_atom[atom_id] = extract_normalized_what_terms(row.get("what", ""))
+
+    counter = defaultdict(int)
+    for row in scene_match_rows:
+        atom_id = row["atom_id"]
+        scene_key = row["scene_key"]
+        for object_name in object_terms_by_atom.get(atom_id, []):
+            counter[(scene_key, object_name)] += 1
+
+    return [
+        {
+            "scene_key": scene_key,
+            "object_name": object_name,
+            "atom_count": atom_count,
+        }
+        for (scene_key, object_name), atom_count in sorted(counter.items())
+    ]
+
+
+def build_scene_time_rows(df: pd.DataFrame, scene_match_rows: list[dict]) -> list[dict]:
+    time_terms_by_atom = {}
+    for _, row in df.iterrows():
+        atom_id = str(row.get("atom_id", "")).strip()
+        if atom_id:
+            time_terms_by_atom[atom_id] = extract_normalized_when_terms(row.get("when", ""))
+
+    counter = defaultdict(int)
+    for row in scene_match_rows:
+        atom_id = row["atom_id"]
+        scene_key = row["scene_key"]
+        for time_name in time_terms_by_atom.get(atom_id, []):
+            counter[(scene_key, time_name)] += 1
+
+    return [
+        {
+            "scene_key": scene_key,
+            "time_name": time_name,
+            "atom_count": atom_count,
+        }
+        for (scene_key, time_name), atom_count in sorted(counter.items())
+    ]
+
+
 def load_business_graph(df: pd.DataFrame, entries: list[dict], scenes: list[dict], clear_first: bool, uri: str, user: str, password: str) -> dict:
     boards, categories, modules = taxonomy_dimension_batches(entries)
     scene_match_rows = build_scene_match_rows(df, scenes)
     scene_actor_rows = build_scene_actor_rows(df, scene_match_rows)
+    scene_object_rows = build_scene_object_rows(df, scene_match_rows)
+    scene_time_rows = build_scene_time_rows(df, scene_match_rows)
     driver = GraphDatabase.driver(uri, auth=(user, password))
     try:
         with driver.session() as session:
@@ -806,6 +1007,8 @@ def load_business_graph(df: pd.DataFrame, entries: list[dict], scenes: list[dict
             session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (a:BusinessAtom) REQUIRE a.id IS UNIQUE")
             session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (d:BusinessDocument) REQUIRE d.name IS UNIQUE")
             session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (w:BusinessActor) REQUIRE w.name IS UNIQUE")
+            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (o:BusinessObject) REQUIRE o.name IS UNIQUE")
+            session.run("CREATE CONSTRAINT IF NOT EXISTS FOR (t:BusinessTimeContext) REQUIRE t.name IS UNIQUE")
 
             session.run("UNWIND $rows AS row MERGE (b:BusinessBoard {name: row.name})", rows=boards)
             session.run(
@@ -853,13 +1056,29 @@ def load_business_graph(df: pd.DataFrame, entries: list[dict], scenes: list[dict
             tag_rows = []
             actor_rows = []
             actor_link_rows = []
+            object_rows = []
+            object_link_rows = []
+            time_rows = []
+            time_link_rows = []
             seen_actors = set()
             seen_actor_links = set()
+            seen_objects = set()
+            seen_object_links = set()
+            seen_times = set()
+            seen_time_links = set()
             for _, row in df.iterrows():
                 atom_id = str(row.get("atom_id", "")).strip()
                 if not atom_id:
                     continue
                 who_terms = extract_who_terms(row.get("who", ""))
+                actor_records = extract_actor_graph_records(row.get("who", ""))
+                who_terms_normalized = [item["name"] for item in actor_records]
+                what_terms = extract_what_terms(row.get("what", ""))
+                object_records = extract_object_graph_records(row.get("what", ""))
+                what_terms_normalized = [item["name"] for item in object_records]
+                when_terms = extract_when_terms(row.get("when", ""))
+                time_records = extract_time_graph_records(row.get("when", ""))
+                when_terms_normalized = [item["name"] for item in time_records]
                 atom_rows.append(
                     {
                         "atom_id": atom_id,
@@ -868,7 +1087,13 @@ def load_business_graph(df: pd.DataFrame, entries: list[dict], scenes: list[dict
                         "article_reference": str(row.get("article_reference", "")).strip(),
                         "who": str(row.get("who", "")).strip(),
                         "who_terms": who_terms,
+                        "who_terms_normalized": who_terms_normalized,
+                        "when": str(row.get("when", "")).strip(),
+                        "when_terms": when_terms,
+                        "when_terms_normalized": when_terms_normalized,
                         "what": str(row.get("what", "")).strip(),
+                        "what_terms": what_terms,
+                        "what_terms_normalized": what_terms_normalized,
                         "how": str(row.get("how", "")).strip(),
                         "where": str(row.get("where", "")).strip(),
                         "content_original": str(row.get("content_original", "")).strip(),
@@ -878,25 +1103,78 @@ def load_business_graph(df: pd.DataFrame, entries: list[dict], scenes: list[dict
                 )
                 for code in json.loads(str(row.get("business_taxonomy_label_codes", "[]"))):
                     tag_rows.append({"atom_id": atom_id, "module_code": code})
-                for actor_name in who_terms:
+                for actor in actor_records:
+                    actor_name = actor["name"]
                     if actor_name not in seen_actors:
-                        actor_rows.append({"name": actor_name})
+                        actor_rows.append(
+                            {
+                                "name": actor_name,
+                                "normalized_name": actor["normalized_name"],
+                                "aliases": actor["aliases"],
+                                "matched_aliases": actor["matched_aliases"],
+                                "source_categories": actor["source_categories"],
+                                "is_normalized": actor["is_normalized"],
+                            }
+                        )
                         seen_actors.add(actor_name)
                     actor_key = (atom_id, actor_name)
                     if actor_key not in seen_actor_links:
                         actor_link_rows.append({"atom_id": atom_id, "actor_name": actor_name})
                         seen_actor_links.add(actor_key)
+                for obj in object_records:
+                    object_name = obj["name"]
+                    if object_name not in seen_objects:
+                        object_rows.append(
+                            {
+                                "name": object_name,
+                                "normalized_name": obj["normalized_name"],
+                                "aliases": obj["aliases"],
+                                "matched_aliases": obj["matched_aliases"],
+                                "source_categories": obj["source_categories"],
+                                "is_normalized": obj["is_normalized"],
+                            }
+                        )
+                        seen_objects.add(object_name)
+                    object_key = (atom_id, object_name)
+                    if object_key not in seen_object_links:
+                        object_link_rows.append({"atom_id": atom_id, "object_name": object_name})
+                        seen_object_links.add(object_key)
+                for time_record in time_records:
+                    time_name = time_record["name"]
+                    if time_name not in seen_times:
+                        time_rows.append(
+                            {
+                                "name": time_name,
+                                "normalized_name": time_record["normalized_name"],
+                                "aliases": time_record["aliases"],
+                                "matched_aliases": time_record["matched_aliases"],
+                                "source_categories": time_record["source_categories"],
+                                "is_normalized": time_record["is_normalized"],
+                            }
+                        )
+                        seen_times.add(time_name)
+                    time_key = (atom_id, time_name)
+                    if time_key not in seen_time_links:
+                        time_link_rows.append({"atom_id": atom_id, "time_name": time_name})
+                        seen_time_links.add(time_key)
 
             session.run(
                 """
                 UNWIND $rows AS row
                 MERGE (d:BusinessDocument {name: row.source_document})
                 MERGE (a:BusinessAtom {id: row.atom_id})
-                SET a.rule_type = row.rule_type,
+                SET a.source_document = row.source_document,
+                    a.rule_type = row.rule_type,
                     a.article_reference = row.article_reference,
                     a.who = row.who,
                     a.who_terms = row.who_terms,
+                    a.who_terms_normalized = row.who_terms_normalized,
+                    a.when = row.when,
+                    a.when_terms = row.when_terms,
+                    a.when_terms_normalized = row.when_terms_normalized,
                     a.what = row.what,
+                    a.what_terms = row.what_terms,
+                    a.what_terms_normalized = row.what_terms_normalized,
                     a.how = row.how,
                     a.where = row.where,
                     a.content_original = row.content_original,
@@ -910,9 +1188,40 @@ def load_business_graph(df: pd.DataFrame, entries: list[dict], scenes: list[dict
                 session.run(
                     """
                     UNWIND $rows AS row
-                    MERGE (:BusinessActor {name: row.name})
+                    MERGE (w:BusinessActor {name: row.name})
+                    SET w.normalized_name = row.normalized_name,
+                        w.aliases = row.aliases,
+                        w.matched_aliases = row.matched_aliases,
+                        w.source_categories = row.source_categories,
+                        w.is_normalized = row.is_normalized
                     """,
                     rows=actor_rows,
+                )
+            if object_rows:
+                session.run(
+                    """
+                    UNWIND $rows AS row
+                    MERGE (o:BusinessObject {name: row.name})
+                    SET o.normalized_name = row.normalized_name,
+                        o.aliases = row.aliases,
+                        o.matched_aliases = row.matched_aliases,
+                        o.source_categories = row.source_categories,
+                        o.is_normalized = row.is_normalized
+                    """,
+                    rows=object_rows,
+                )
+            if time_rows:
+                session.run(
+                    """
+                    UNWIND $rows AS row
+                    MERGE (t:BusinessTimeContext {name: row.name})
+                    SET t.normalized_name = row.normalized_name,
+                        t.aliases = row.aliases,
+                        t.matched_aliases = row.matched_aliases,
+                        t.source_categories = row.source_categories,
+                        t.is_normalized = row.is_normalized
+                    """,
+                    rows=time_rows,
                 )
             if actor_link_rows:
                 session.run(
@@ -923,6 +1232,26 @@ def load_business_graph(df: pd.DataFrame, entries: list[dict], scenes: list[dict
                     MERGE (a)-[:INVOLVES_ACTOR]->(w)
                     """,
                     rows=actor_link_rows,
+                )
+            if object_link_rows:
+                session.run(
+                    """
+                    UNWIND $rows AS row
+                    MATCH (a:BusinessAtom {id: row.atom_id})
+                    MATCH (o:BusinessObject {name: row.object_name})
+                    MERGE (a)-[:TARGETS_OBJECT]->(o)
+                    """,
+                    rows=object_link_rows,
+                )
+            if time_link_rows:
+                session.run(
+                    """
+                    UNWIND $rows AS row
+                    MATCH (a:BusinessAtom {id: row.atom_id})
+                    MATCH (t:BusinessTimeContext {name: row.time_name})
+                    MERGE (a)-[:HAS_TIME_CONTEXT]->(t)
+                    """,
+                    rows=time_link_rows,
                 )
             if tag_rows:
                 session.run(
@@ -958,6 +1287,28 @@ def load_business_graph(df: pd.DataFrame, entries: list[dict], scenes: list[dict
                     """,
                     rows=scene_actor_rows,
                 )
+            if scene_object_rows:
+                session.run(
+                    """
+                    UNWIND $rows AS row
+                    MATCH (s:BusinessScene {key: row.scene_key})
+                    MATCH (o:BusinessObject {name: row.object_name})
+                    MERGE (s)-[r:SCENE_HAS_OBJECT]->(o)
+                    SET r.atom_count = row.atom_count
+                    """,
+                    rows=scene_object_rows,
+                )
+            if scene_time_rows:
+                session.run(
+                    """
+                    UNWIND $rows AS row
+                    MATCH (s:BusinessScene {key: row.scene_key})
+                    MATCH (t:BusinessTimeContext {name: row.time_name})
+                    MERGE (s)-[r:SCENE_HAS_TIME]->(t)
+                    SET r.atom_count = row.atom_count
+                    """,
+                    rows=scene_time_rows,
+                )
     finally:
         driver.close()
 
@@ -970,8 +1321,14 @@ def load_business_graph(df: pd.DataFrame, entries: list[dict], scenes: list[dict
         "tags": len(tag_rows),
         "actors": len(actor_rows),
         "actor_links": len(actor_link_rows),
+        "objects": len(object_rows),
+        "object_links": len(object_link_rows),
+        "time_contexts": len(time_rows),
+        "time_links": len(time_link_rows),
         "scene_matches": len(scene_match_rows),
         "scene_actors": len(scene_actor_rows),
+        "scene_objects": len(scene_object_rows),
+        "scene_times": len(scene_time_rows),
     }
 
 
@@ -980,6 +1337,8 @@ def save_graph_json(df: pd.DataFrame, entries: list[dict], scenes: list[dict]) -
     edges = []
     scene_match_rows = build_scene_match_rows(df, scenes)
     scene_actor_rows = build_scene_actor_rows(df, scene_match_rows)
+    scene_object_rows = build_scene_object_rows(df, scene_match_rows)
+    scene_time_rows = build_scene_time_rows(df, scene_match_rows)
 
     for entry in entries:
         board_id = f"BOARD::{entry['section']}"
@@ -1020,6 +1379,12 @@ def save_graph_json(df: pd.DataFrame, entries: list[dict], scenes: list[dict]) -
         atom_id = str(row.get("atom_id", "")).strip()
         if not atom_id:
             continue
+        who_terms = extract_who_terms(row.get("who", ""))
+        actor_records = extract_actor_graph_records(row.get("who", ""))
+        what_terms = extract_what_terms(row.get("what", ""))
+        object_records = extract_object_graph_records(row.get("what", ""))
+        when_terms = extract_when_terms(row.get("when", ""))
+        time_records = extract_time_graph_records(row.get("when", ""))
         atom_node_id = f"ATOM::{atom_id}"
         nodes.append(
             {
@@ -1028,9 +1393,15 @@ def save_graph_json(df: pd.DataFrame, entries: list[dict], scenes: list[dict]) -
                 "atom_id": atom_id,
                 "source_document": str(row.get("source_document", "")),
                 "who": str(row.get("who", "")),
-                "who_terms": extract_who_terms(row.get("who", "")),
+                "who_terms": who_terms,
+                "who_terms_normalized": [item["name"] for item in actor_records],
+                "when": str(row.get("when", "")),
+                "when_terms": when_terms,
+                "when_terms_normalized": [item["name"] for item in time_records],
                 "rule_type": str(row.get("rule_type", "")),
                 "what": str(row.get("what", "")),
+                "what_terms": what_terms,
+                "what_terms_normalized": [item["name"] for item in object_records],
                 "how": str(row.get("how", "")),
                 "content_original": str(row.get("content_original", "")),
             }
@@ -1043,14 +1414,70 @@ def save_graph_json(df: pd.DataFrame, entries: list[dict], scenes: list[dict]) -
                     "type": "TAGGED_AS",
                 }
             )
-        for actor_name in extract_who_terms(row.get("who", "")):
+        for actor in actor_records:
+            actor_name = actor["name"]
             actor_node_id = f"ACTOR::{actor_name}"
-            nodes.append({"id": actor_node_id, "type": "actor", "name": actor_name})
+            nodes.append(
+                {
+                    "id": actor_node_id,
+                    "type": "actor",
+                    "name": actor_name,
+                    "normalized_name": actor["normalized_name"],
+                    "aliases": actor["aliases"],
+                    "matched_aliases": actor["matched_aliases"],
+                    "source_categories": actor["source_categories"],
+                    "is_normalized": actor["is_normalized"],
+                }
+            )
             edges.append(
                 {
                     "source": atom_node_id,
                     "target": actor_node_id,
                     "type": "INVOLVES_ACTOR",
+                }
+            )
+        for obj in object_records:
+            object_name = obj["name"]
+            object_node_id = f"OBJECT::{object_name}"
+            nodes.append(
+                {
+                    "id": object_node_id,
+                    "type": "object",
+                    "name": object_name,
+                    "normalized_name": obj["normalized_name"],
+                    "aliases": obj["aliases"],
+                    "matched_aliases": obj["matched_aliases"],
+                    "source_categories": obj["source_categories"],
+                    "is_normalized": obj["is_normalized"],
+                }
+            )
+            edges.append(
+                {
+                    "source": atom_node_id,
+                    "target": object_node_id,
+                    "type": "TARGETS_OBJECT",
+                }
+            )
+        for time_record in time_records:
+            time_name = time_record["name"]
+            time_node_id = f"TIME::{time_name}"
+            nodes.append(
+                {
+                    "id": time_node_id,
+                    "type": "time_context",
+                    "name": time_name,
+                    "normalized_name": time_record["normalized_name"],
+                    "aliases": time_record["aliases"],
+                    "matched_aliases": time_record["matched_aliases"],
+                    "source_categories": time_record["source_categories"],
+                    "is_normalized": time_record["is_normalized"],
+                }
+            )
+            edges.append(
+                {
+                    "source": atom_node_id,
+                    "target": time_node_id,
+                    "type": "HAS_TIME_CONTEXT",
                 }
             )
 
@@ -1071,6 +1498,24 @@ def save_graph_json(df: pd.DataFrame, entries: list[dict], scenes: list[dict]) -
                 "source": f"SCENE::{row['scene_key']}",
                 "target": f"ACTOR::{row['actor_name']}",
                 "type": "SCENE_HAS_ACTOR",
+                "atom_count": row["atom_count"],
+            }
+        )
+    for row in scene_object_rows:
+        edges.append(
+            {
+                "source": f"SCENE::{row['scene_key']}",
+                "target": f"OBJECT::{row['object_name']}",
+                "type": "SCENE_HAS_OBJECT",
+                "atom_count": row["atom_count"],
+            }
+        )
+    for row in scene_time_rows:
+        edges.append(
+            {
+                "source": f"SCENE::{row['scene_key']}",
+                "target": f"TIME::{row['time_name']}",
+                "type": "SCENE_HAS_TIME",
                 "atom_count": row["atom_count"],
             }
         )
@@ -1276,12 +1721,12 @@ def build_parser():
     parser.add_argument("--batch-size", type=int, default=12)
     parser.add_argument("--skip-neo4j", action="store_true")
     parser.add_argument("--clear-neo4j", action="store_true")
-    parser.add_argument("--neo4j-uri", default="bolt://localhost:7687")
-    parser.add_argument("--neo4j-user", default="neo4j")
-    parser.add_argument("--neo4j-password", default="123456")
+    parser.add_argument("--neo4j-uri", default=DEFAULT_NEO4J_URI)
+    parser.add_argument("--neo4j-user", default=DEFAULT_NEO4J_USER)
+    parser.add_argument("--neo4j-password", default=get_neo4j_password())
     parser.add_argument("--query", action="append", dest="queries", help="Repeatable retrieval-inspection query.")
     parser.add_argument("--print-taxonomy", action="store_true", help="Print the taxonomy doc content in a readable structure.")
-    return parser
+    return add_mysql_sync_args(parser)
 
 
 def main():
@@ -1338,6 +1783,29 @@ def main():
     recall_report = build_recall_report(classified_df, entries, scenes, queries)
     DEFAULT_RECALL_JSON.write_text(json.dumps(recall_report, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    mysql_items = [
+        ("taxonomy_catalog", DEFAULT_TAXONOMY_XLSX),
+        ("classified_atoms", DEFAULT_CLASSIFIED_FILE),
+        ("taxonomy_recall_report", DEFAULT_RECALL_JSON),
+    ]
+    if args.force_extract:
+        mysql_items.insert(0, ("legal_atoms", atoms_path))
+
+    sync_results = maybe_sync_artifacts_from_args(
+        args,
+        items=mysql_items,
+        default_batch_label=f"business-taxonomy-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        taxonomy_catalog_path=DEFAULT_TAXONOMY_XLSX,
+        source_dir=PROCESSED_DIR,
+        batch_extra_json={
+            "pipeline_step": "business_taxonomy_pipeline",
+            "force_extract": args.force_extract,
+            "force_classify": args.force_classify,
+            "heuristic_only": args.heuristic_only,
+            "skip_neo4j": args.skip_neo4j,
+        },
+    )
+
     print(f"Taxonomy catalog: {DEFAULT_TAXONOMY_XLSX}")
     print(f"Classified atoms: {DEFAULT_CLASSIFIED_FILE}")
     print(f"Graph JSON: {DEFAULT_GRAPH_JSON}")
@@ -1353,6 +1821,8 @@ def main():
             f"tags={graph_stats['tags']} "
             f"scene_matches={graph_stats['scene_matches']}"
         )
+    for item in sync_results:
+        print(f"MySQL sync [{item['status']}] {item['artifact_type']}: {item['path']}")
 
 
 if __name__ == "__main__":

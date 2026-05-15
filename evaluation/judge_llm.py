@@ -1,44 +1,54 @@
-# evaluation/judge_llm.py
 import json
+
 from openai import OpenAI
-import config  # 导入配置文件
+
+import config
 
 
 class QwenJudge:
     def __init__(self):
-        # 使用 OpenAI 兼容协议连接阿里云 Qwen
+        if not config.DASHSCOPE_API_KEY:
+            raise RuntimeError(
+                "Missing DASHSCOPE_API_KEY. Set it in an environment variable or a local qwen.env before running evaluation."
+            )
+
         self.client = OpenAI(
             api_key=config.DASHSCOPE_API_KEY,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            base_url=config.DASHSCOPE_BASE_URL,
         )
 
     def evaluate_logic(self, original, reconstructed):
-        """
-        调用 Qwen 进行逻辑一致性判断
-        """
         prompt = f"""
-        你是一名金融合规风控专家。请对比[原文]和[还原规则]，判断逻辑是否一致。
-        重点检查：1.否定词是否遗漏（如"不得"变"可以"）；2.主体是否颠倒；3.必要条件是否缺失。
+You are a financial compliance reviewer.
+Compare the original legal text and the reconstructed rule.
 
-        【原文】：{original}
-        【还原】：{reconstructed}
+Focus on:
+1. Lost negation or inverted meaning
+2. Subject/entity mismatch
+3. Missing required conditions
 
-        请仅返回如下JSON格式（不要包含Markdown标记）：
-        {{
-            "is_pass": true/false,
-            "reason": "简短的判定理由",
-            "risk_type": "无风险/否定语义丢失/条件缺失/幻觉"
-        }}
-        """
+Return JSON only:
+{{
+  "is_pass": true,
+  "reason": "short explanation",
+  "risk_type": "none|negation_loss|missing_condition|entity_mismatch|other"
+}}
+
+Original:
+{original}
+
+Reconstructed:
+{reconstructed}
+"""
 
         try:
             response = self.client.chat.completions.create(
                 model=config.LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
             )
             return json.loads(response.choices[0].message.content)
         except Exception as e:
             print(f"LLM Error: {e}")
-            return {"is_pass": False, "reason": "API调用失败", "risk_type": "SystemError"}
+            return {"is_pass": False, "reason": "API call failed", "risk_type": "SystemError"}

@@ -1,0 +1,136 @@
+{
+  "checked_at": "2026-05-14T16:55:40",
+  "status": "WARN",
+  "graph_json": {
+    "path": "D:\\pythonProject-financial ex\\data\\processed\\business_taxonomy_graph.json",
+    "node_total": 3975,
+    "edge_total": 9375,
+    "node_type_counts": {
+      "actor": 514,
+      "atom": 1942,
+      "board": 3,
+      "category": 18,
+      "module": 85,
+      "object": 341,
+      "scene": 336,
+      "time_context": 736
+    },
+    "edge_type_counts": {
+      "HAS_CATEGORY": 18,
+      "HAS_MODULE": 85,
+      "HAS_SCENE": 336,
+      "HAS_TIME_CONTEXT": 1800,
+      "INVOLVES_ACTOR": 2601,
+      "MATCHES_SCENE": 296,
+      "SCENE_HAS_ACTOR": 202,
+      "SCENE_HAS_OBJECT": 118,
+      "SCENE_HAS_TIME": 199,
+      "TAGGED_AS": 2441,
+      "TARGETS_OBJECT": 1279
+    },
+    "zero_degree_total": 0,
+    "zero_degree_by_type": {}
+  },
+  "neo4j": {
+    "uri": "<NEO4J_URI>",
+    "user": "<NEO4J_USER>",
+    "node_counts": {
+      "board": 3,
+      "category": 18,
+      "module": 85,
+      "scene": 336,
+      "atom": 1942,
+      "document": 28,
+      "actor": 514,
+      "object": 341,
+      "time_context": 736
+    },
+    "edge_counts": {
+      "HAS_CATEGORY": 18,
+      "HAS_MODULE": 85,
+      "HAS_SCENE": 336,
+      "HAS_ATOM": 1942,
+      "TAGGED_AS": 2441,
+      "MATCHES_SCENE": 296,
+      "INVOLVES_ACTOR": 2601,
+      "TARGETS_OBJECT": 1279,
+      "HAS_TIME_CONTEXT": 1800,
+      "SCENE_HAS_ACTOR": 202,
+      "SCENE_HAS_OBJECT": 118,
+      "SCENE_HAS_TIME": 199
+    },
+    "core_node_total": 3975,
+    "core_edge_total": 9375,
+    "zero_degree_total": 0,
+    "zero_degree_by_label": [],
+    "coverage": {
+      "atoms_without_module": 0,
+      "atoms_without_scene": 1709,
+      "atoms_without_module_and_scene": 0,
+      "modules_without_atoms": 38,
+      "scenes_without_atoms": 309,
+      "actors_without_atom": 0,
+      "objects_without_atom": 0,
+      "times_without_atom": 0
+    },
+    "top_unhit_modules": [
+      {
+        "code": "BASE-01-03",
+        "name": "资质认定"
+      },
+      {
+        "code": "BASE-01-04",
+        "name": "角色权限"
+      },
+      {
+        "code": "BASE-02-02",
+        "name": "机构退出"
+      },
+      {
+        "code": "BASE-02-03",
+        "name": "机构筹建"
+      },
+      {
+        "code": "BASE-02-04",
+        "name": "机构合并"
+      }
+    ],
+    "top_unhit_scenes": [
+      {
+        "key": "BASE-01-01-SCENE-01",
+        "name": "岗前培训"
+      },
+      {
+        "key": "BASE-01-01-SCENE-02",
+        "name": "业务技能培训"
+      },
+      {
+        "key": "BASE-01-01-SCENE-03",
+        "name": "考核组织与评定"
+      },
+      {
+        "key": "BASE-01-01-SCENE-04",
+        "name": "培训档案管理"
+      },
+      {
+        "key": "BASE-01-02-SCENE-01",
+        "name": "岗位轮换管理"
+      }
+    ]
+  },
+  "mismatches": [],
+  "failures": [],
+  "warnings": [
+    "High atom-to-scene gap: 1709 / 1942 atoms have no scene match (88.0%)",
+    "Unhit modules remain: 38 / 85 modules have no atom evidence (44.7%)",
+    "Unhit scenes remain: 309 / 336 scenes have no atom evidence (92.0%)"
+  ],
+  "coverage_summary": {
+    "atoms_with_scene": 233,
+    "atoms_with_scene_ratio": 0.1199794026776519,
+    "modules_with_atoms": 47,
+    "modules_with_atoms_ratio": 0.5529411764705883,
+    "scenes_with_atoms": 27,
+    "scenes_with_atoms_ratio": 0.08035714285714286
+  }
+}

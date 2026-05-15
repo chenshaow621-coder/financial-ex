@@ -2,12 +2,14 @@ import argparse
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
-from data_loader import load_and_chunk_docx
+from data_loader import load_and_chunk_document
 from dictionary_builder import build_entity_dictionary
+from mysql_traceability import add_mysql_sync_args, maybe_sync_artifacts_from_args
 from prompt import build_stage1_prompt, build_stage2_prompt, build_stage3_ee_prompt
 from qwen_client import call_qwen, get_default_model
 from schema import EventAssemblyResult, generate_atom_id
@@ -25,12 +27,12 @@ def clean_json_string(raw_str: str) -> str:
     return cleaned.strip()
 
 
-def extract_3stage_with_retry(text_chunk, source_filename, entity_dict, model=None, max_retries=3):
+def extract_3stage_with_retry(text_chunk, source_filename, entity_dict, model=None, max_retries=3, api_config=None):
     model = model or get_default_model()
     for attempt in range(max_retries):
         try:
             stage1_prompt = build_stage1_prompt(text_chunk)
-            stage1_response = call_qwen(stage1_prompt, model=model, timeout=600)
+            stage1_response = call_qwen(stage1_prompt, model=model, timeout=600, api_config=api_config)
             print(f"    [Stage 1] {stage1_response.strip()}")
             if not stage1_response or stage1_response.strip() in {"?", "[]"}:
                 return []
@@ -40,7 +42,7 @@ def extract_3stage_with_retry(text_chunk, source_filename, entity_dict, model=No
             for category in identified_categories:
                 reference_words = entity_dict.get(category, [])
                 stage2_prompt = build_stage2_prompt(text_chunk, category, reference_words)
-                stage2_response = call_qwen(stage2_prompt, model=model, timeout=600)
+                stage2_response = call_qwen(stage2_prompt, model=model, timeout=600, api_config=api_config)
                 json_str = clean_json_string(stage2_response)
                 if json_str and json_str != "[]":
                     try:
@@ -53,12 +55,12 @@ def extract_3stage_with_retry(text_chunk, source_filename, entity_dict, model=No
 
             ner_entities_json = json.dumps(all_extracted_entities, ensure_ascii=False)
             stage3_prompt = build_stage3_ee_prompt(text_chunk, ner_entities_json)
-            stage3_response = call_qwen(stage3_prompt, model=model, timeout=600)
+            stage3_response = call_qwen(stage3_prompt, model=model, timeout=600, api_config=api_config)
             json_str = clean_json_string(stage3_response)
             final_data = json.loads(json_str)
             result = EventAssemblyResult.model_validate(final_data)
 
-            clean_source = source_filename.replace(".docx", "").replace("(1)", "")
+            clean_source = Path(source_filename).stem.replace("(1)", "")
             atoms = []
             for atom in result.atoms:
                 atom_dict = atom.model_dump()
@@ -81,11 +83,12 @@ def resolve_entity_dict_path() -> Path:
 
 def collect_target_docs(doc_keywords):
     docs = []
-    for path in RAW_DIR.glob("*.docx"):
-        if path.name.startswith("~$"):
-            continue
-        if any(keyword in path.name for keyword in doc_keywords):
-            docs.append(path)
+    for pattern in ("*.docx", "*.pdf"):
+        for path in RAW_DIR.glob(pattern):
+            if path.name.startswith("~$"):
+                continue
+            if any(keyword in path.name for keyword in doc_keywords):
+                docs.append(path)
     return sorted(docs)
 
 
@@ -109,24 +112,24 @@ def flatten_atom_rows(atom_rows, counter_start=1):
     return rows, counter
 
 
-def run_pipeline(doc_keywords=None, output_name="legal_atoms_qwen_sample.xlsx", model=None, max_chunks_per_doc=0):
+def run_pipeline(doc_keywords=None, output_name="legal_atoms_qwen_sample.xlsx", model=None, max_chunks_per_doc=0, api_config=None):
     doc_keywords = doc_keywords or ["票据法", "支付结算办法"]
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     entity_dict = build_entity_dictionary(str(resolve_entity_dict_path()))
     target_docs = collect_target_docs(doc_keywords)
     if not target_docs:
-        raise FileNotFoundError(f"No docx files matched keywords: {doc_keywords}")
+        raise FileNotFoundError(f"No docx/pdf files matched keywords: {doc_keywords}")
 
     all_rows = []
     global_counter = 1
     for path in target_docs:
         print(f"Processing {path.name}")
-        chunks = load_and_chunk_docx(str(path))
+        chunks = load_and_chunk_document(str(path))
         if max_chunks_per_doc and max_chunks_per_doc > 0:
             chunks = chunks[:max_chunks_per_doc]
         for index, chunk in enumerate(chunks, 1):
             print(f"  - Chunk {index}/{len(chunks)}")
-            atoms = extract_3stage_with_retry(chunk, path.name, entity_dict, model=model)
+            atoms = extract_3stage_with_retry(chunk, path.name, entity_dict, model=model, api_config=api_config)
             batch_rows, global_counter = flatten_atom_rows(atoms, global_counter)
             all_rows.extend(batch_rows)
             print(f"    -> atoms: {len(batch_rows)}")
@@ -151,14 +154,23 @@ def build_parser():
     parser.add_argument("--output", default="legal_atoms_qwen_sample.xlsx")
     parser.add_argument("--model", default=None)
     parser.add_argument("--max-chunks-per-doc", type=int, default=0)
-    return parser
+    return add_mysql_sync_args(parser)
 
 
 if __name__ == "__main__":
     args = build_parser().parse_args()
-    run_pipeline(
+    output_path = run_pipeline(
         doc_keywords=args.doc_keywords,
         output_name=args.output,
         model=args.model,
         max_chunks_per_doc=args.max_chunks_per_doc,
     )
+    sync_results = maybe_sync_artifacts_from_args(
+        args,
+        items=[("legal_atoms", output_path)],
+        default_batch_label=f"legal-atoms-extract-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        source_dir=output_path.parent,
+        batch_extra_json={"pipeline_step": "main.run_pipeline"},
+    )
+    for item in sync_results:
+        print(f"MySQL sync [{item['status']}] {item['artifact_type']}: {item['path']}")

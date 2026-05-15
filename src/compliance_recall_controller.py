@@ -6,13 +6,11 @@ import re
 import time
 import unicodedata
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from docx import Document
-from docx.table import Table
-from docx.text.paragraph import Paragraph
 
 from business_taxonomy_pipeline import (
     DEFAULT_CLASSIFIED_FILE,
@@ -26,7 +24,7 @@ from business_taxonomy_pipeline import (
     safe_literal_list,
     strip_category_prefix,
 )
-from data_loader import clean_text, iter_block_items
+from data_loader import clean_text, load_docx_lines, load_pdf_lines
 from formal_rule_engine import (
     ATOM_ANALYSIS_MODES,
     FINAL_JUDGEMENT_MODES,
@@ -35,7 +33,9 @@ from formal_rule_engine import (
     build_symbolic_final_conclusion,
     build_symbolic_recall_judgement,
 )
-from qwen_client import call_qwen, get_reasoning_model
+from mysql_traceability import add_mysql_sync_args, maybe_sync_artifacts_from_args
+from prompt_manager import PROMPT_DOC_PATHS, load_prompt_text, render_prompt_template
+from qwen_client import call_qwen, get_reasoning_model, normalize_api_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -43,11 +43,7 @@ RAW_DIR = PROJECT_ROOT / "data" / "raw"
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 DEFAULT_REPORT_PATH = PROCESSED_DIR / "compliance_recall_loop_report.json"
 
-PROMPT_DOCS = {
-    "atom_enhanced": RAW_DIR / "单条原子版-增强稿.docx",
-    "atom_minimum": RAW_DIR / "原子知识最小可执行颗粒度判断提示词.docx",
-    "set_closure": RAW_DIR / "合规判断主提示词.docx",
-}
+PROMPT_DOCS = PROMPT_DOC_PATHS
 
 DIRECTION_NAMES = {
     "A": "业务向下召回",
@@ -158,14 +154,6 @@ APPENDIX_HEADER_PATTERN = re.compile(r"^(附[一二三四五六七八九十0-9]+
 APPENDIX_ITEM_PATTERN = re.compile(r"^([一二三四五六七八九十]+)、")
 
 
-def load_docx_text(path: Path) -> str:
-    if not path.exists():
-        raise FileNotFoundError(f"Prompt doc not found: {path}")
-    doc = Document(str(path))
-    paragraphs = [clean_text(paragraph.text) for paragraph in doc.paragraphs if clean_text(paragraph.text)]
-    return "\n".join(paragraphs)
-
-
 def safe_json_loads(value: Any, default: Any) -> Any:
     if isinstance(value, (list, dict)):
         return value
@@ -258,19 +246,12 @@ def parse_record_who_terms(record: dict[str, Any], who_terms: list[str]) -> list
 
 
 def parse_doc_lines(path: Path) -> list[str]:
-    doc = Document(str(path))
-    lines = []
-    for block in iter_block_items(doc):
-        if isinstance(block, Paragraph):
-            text = clean_text(block.text)
-            if text:
-                lines.append(text)
-        elif isinstance(block, Table):
-            for row in block.rows:
-                cells = [clean_text(cell.text) for cell in row.cells]
-                if any(cells):
-                    lines.append(" | ".join(cells))
-    return lines
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return load_pdf_lines(str(path))
+    if suffix == ".docx":
+        return load_docx_lines(str(path))
+    return []
 
 
 def parse_legal_doc_segments(path: Path) -> list[dict[str, str]]:
@@ -334,6 +315,7 @@ class ComplianceRecallController:
         atoms_file: Path | None = None,
         taxonomy_doc: str | None = None,
         model: str | None = None,
+        api_config: dict | None = None,
         recall_judgement_mode: str = "llm",
         atom_analysis_mode: str = "llm",
         final_judgement_mode: str = "llm",
@@ -345,7 +327,8 @@ class ComplianceRecallController:
         if not self.atoms_file.exists():
             raise FileNotFoundError(f"Classified atom file not found: {self.atoms_file}")
 
-        self.model = model or get_reasoning_model()
+        self.api_config = normalize_api_config(model=model, **(api_config or {}))
+        self.model = self.api_config["reasoning_model"] or self.api_config["model"] or get_reasoning_model()
         if recall_judgement_mode not in RECALL_JUDGEMENT_MODES:
             raise ValueError(
                 f"Unsupported recall_judgement_mode: {recall_judgement_mode}. "
@@ -372,7 +355,11 @@ class ComplianceRecallController:
         self.metadata, self.entries, self.scenes = parse_taxonomy(self.taxonomy_doc)
         self.code_to_entry = {entry["code"]: entry for entry in self.entries}
         self.scene_by_key = {scene["scene_key"]: scene for scene in self.scenes}
-        self.prompt_texts = {name: load_docx_text(path) for name, path in PROMPT_DOCS.items()}
+        self.prompt_texts = {
+            "atom_enhanced": load_prompt_text("recall_atom_enhanced_base"),
+            "atom_minimum": load_prompt_text("recall_atom_minimum_base"),
+            "set_closure": load_prompt_text("recall_set_closure_base"),
+        }
 
         df = pd.read_excel(self.atoms_file).fillna("")
         self.records: list[dict[str, Any]] = []
@@ -430,7 +417,8 @@ class ComplianceRecallController:
 
         self.raw_doc_candidates = [
             path
-            for path in RAW_DIR.glob("*.docx")
+            for pattern in ("*.docx", "*.pdf")
+            for path in RAW_DIR.glob(pattern)
             if path not in PROMPT_DOCS.values() and path != self.taxonomy_doc
         ]
         self._raw_doc_match_cache: dict[str, Path | None] = {}
@@ -445,7 +433,7 @@ class ComplianceRecallController:
         last_error: Exception | None = None
         for attempt in range(1, max_retries + 1):
             try:
-                response = call_qwen(prompt_text, model=self.model, timeout=timeout)
+                response = call_qwen(prompt_text, model=self.model, timeout=timeout, api_config=self.api_config)
                 payload = json.loads(clean_json_string(response))
                 if isinstance(payload, dict):
                     return payload
@@ -719,22 +707,14 @@ class ComplianceRecallController:
                 round_index=round_index,
             )
 
-        prompt_text = f"""{self.prompt_texts['set_closure']}
-
-[当前业务问题/审核问题]
-{question}
-
-[当前命中的业务层级信息]
-{json.dumps(round_context, ensure_ascii=False, indent=2)}
-
-[当前召回轮次]
-第 {round_index} 轮
-
-[当前召回的知识集合]
-{json.dumps(evidence, ensure_ascii=False, indent=2)}
-
-请严格按照上文要求输出 JSON，不要输出 Markdown 代码块，也不要补充额外说明。
-"""
+        prompt_text = render_prompt_template(
+            "recall_set_closure_wrapper",
+            base_prompt=self.prompt_texts["set_closure"],
+            question=question,
+            round_context_json=json.dumps(round_context, ensure_ascii=False, indent=2),
+            round_index=round_index,
+            evidence_json=json.dumps(evidence, ensure_ascii=False, indent=2),
+        )
         payload = self.call_json_prompt(prompt_text)
         payload["decision"] = normalize_recall_decision(payload.get("decision"))
         payload["can_make_final_compliance_judgement"] = normalize_bool(payload.get("can_make_final_compliance_judgement"))
@@ -1409,32 +1389,11 @@ class ComplianceRecallController:
             "final_evidence": evidence,
         }
 
-        allowed = " / ".join(sorted(FINAL_CONCLUSION_OPTIONS))
-        return f"""你是金融法规合规查验的最终结论生成器。你的任务不是继续召回，而是在证据已经基本闭环的前提下，输出稳定、克制、可解释的最终结论卡片。
-
-要求：
-1. 只能从以下结论中选择一个：{allowed}
-2. 如果证据之间仍有冲突、例外条款未消解、限制性规则与授权性规则尚未完成取舍，优先输出“需人工复核”，不要强行给出“可办理/不可办理”。
-3. 如果证据明确显示必须先补材料，优先输出“需补材料后办理”。
-4. 输出必须是 JSON 对象，不要输出 Markdown 代码块，也不要补充额外说明。
-
-请输出如下 JSON：
-{{
-  "conclusion": "可办理|不可办理|有条件可办理|需补材料后办理|需人工复核|证据不足待补召回",
-  "conclusion_summary": "一句话总结结论与理由",
-  "confidence": 0.0,
-  "legal_basis": ["最多 6 条，聚焦直接支持结论的依据"],
-  "required_materials": ["最多 6 条"],
-  "required_actions": ["最多 6 条"],
-  "exceptions_and_limits": ["最多 8 条，包含禁止、例外、时限、阈值"],
-  "missing_items": ["最多 6 条"],
-  "risk_points": ["最多 6 条"],
-  "follow_up_actions": ["最多 5 条，写清下一步怎么做"]
-}}
-
-[输入信息]
-{json.dumps(prompt_payload, ensure_ascii=False, indent=2)}
-"""
+        return render_prompt_template(
+            "recall_final_conclusion",
+            allowed_conclusions=" / ".join(sorted(FINAL_CONCLUSION_OPTIONS)),
+            prompt_payload_json=json.dumps(prompt_payload, ensure_ascii=False, indent=2),
+        )
 
     def build_final_conclusion(self, report: dict[str, Any]) -> dict[str, Any]:
         summary = report.get("compliance_summary") or self.build_compliance_summary(report)
@@ -1540,23 +1499,14 @@ class ComplianceRecallController:
                 record=record,
             )
 
-        prompt_text = f"""{self.prompt_texts['atom_minimum']}
-
----
-
-{self.prompt_texts['atom_enhanced']}
-
-[当前业务问题]
-{question}
-
-[当前命中的业务层级信息]
-{json.dumps(self.build_round_context(business_match, [atom_id]), ensure_ascii=False, indent=2)}
-
-[当前原子知识]
-{json.dumps(record, ensure_ascii=False, indent=2)}
-
-请严格输出增强稿要求的 JSON，不要输出 Markdown 代码块，也不要补充额外解释。
-"""
+        prompt_text = render_prompt_template(
+            "recall_atom_analysis_wrapper",
+            atom_minimum_prompt=self.prompt_texts["atom_minimum"],
+            atom_enhanced_prompt=self.prompt_texts["atom_enhanced"],
+            question=question,
+            round_context_json=json.dumps(self.build_round_context(business_match, [atom_id]), ensure_ascii=False, indent=2),
+            record_json=json.dumps(record, ensure_ascii=False, indent=2),
+        )
         payload = self.call_json_prompt(prompt_text)
         payload["atom_id"] = atom_id
         payload["decision"] = normalize_atom_decision(payload.get("decision"))
@@ -2075,7 +2025,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-atom-checks", type=int, default=6)
     parser.add_argument("--dry-run", action="store_true", help="只跑本地初始召回，不调用 LLM。")
     parser.add_argument("--output", default=str(DEFAULT_REPORT_PATH))
-    return parser
+    return add_mysql_sync_args(parser)
 
 
 def main() -> None:
@@ -2117,6 +2067,21 @@ def main() -> None:
     print(f"Recall loop report saved to: {output_path}")
     print(f"Final decision: {report['final_decision']}")
     print(f"Final evidence count: {report['final_recall_atom_count']}")
+    sync_results = maybe_sync_artifacts_from_args(
+        args,
+        items=[("compliance_recall_report", output_path)],
+        default_batch_label=f"compliance-recall-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        source_dir=output_path.parent,
+        batch_extra_json={
+            "pipeline_step": "compliance_recall_controller",
+            "question": args.question,
+            "query": args.query,
+            "who": args.who,
+            "dry_run": args.dry_run,
+        },
+    )
+    for item in sync_results:
+        print(f"MySQL sync [{item['status']}] {item['artifact_type']}: {item['path']}")
 
 
 if __name__ == "__main__":

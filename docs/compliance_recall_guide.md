@@ -149,9 +149,9 @@
 
 当前页面默认连接：
 
-- URI：`bolt://localhost:7687`
-- 用户名：`neo4j`
-- 密码：`123456`
+- URI：读取环境变量 `NEO4J_URI`，未设置时使用本机 `bolt://localhost:7687`
+- 用户名：读取环境变量 `NEO4J_USER`
+- 密码：读取环境变量 `NEO4J_PASSWORD`，不要写入仓库
 
 至少保证：
 
@@ -161,7 +161,6 @@
 
 图查询可参考：
 
-- `docs/neo4j_business_taxonomy_queries.md`
 
 ### 5.2 Qwen
 

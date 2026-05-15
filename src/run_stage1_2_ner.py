@@ -2,12 +2,14 @@ import argparse
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
-from data_loader import load_and_chunk_docx
+from data_loader import load_and_chunk_document
 from dictionary_builder import build_entity_dictionary
+from mysql_traceability import add_mysql_sync_args, maybe_sync_artifacts_from_args
 from prompt import build_stage1_prompt, build_stage2_prompt
 from qwen_client import call_qwen, get_default_model
 
@@ -34,20 +36,21 @@ def resolve_entity_dict_path() -> Path:
 
 def collect_target_docs(doc_keywords):
     docs = []
-    for path in RAW_DIR.glob("*.docx"):
-        if path.name.startswith("~$"):
-            continue
-        if any(keyword in path.name for keyword in doc_keywords):
-            docs.append(path)
+    for pattern in ("*.docx", "*.pdf"):
+        for path in RAW_DIR.glob(pattern):
+            if path.name.startswith("~$"):
+                continue
+            if any(keyword in path.name for keyword in doc_keywords):
+                docs.append(path)
     return sorted(docs)
 
 
-def extract_entities_only(text_chunk, entity_dict, model=None, max_retries=3):
+def extract_entities_only(text_chunk, entity_dict, model=None, max_retries=3, api_config=None):
     model = model or get_default_model()
     for attempt in range(max_retries):
         try:
             stage1_prompt = build_stage1_prompt(text_chunk)
-            stage1_response = call_qwen(stage1_prompt, model=model, timeout=300)
+            stage1_response = call_qwen(stage1_prompt, model=model, timeout=300, api_config=api_config)
             print(f"    [Stage 1] {stage1_response.strip()}")
             if not stage1_response or stage1_response.strip() in {"?", "[]"}:
                 return "[]"
@@ -56,7 +59,7 @@ def extract_entities_only(text_chunk, entity_dict, model=None, max_retries=3):
             for category in identified_categories:
                 reference_words = entity_dict.get(category, [])
                 stage2_prompt = build_stage2_prompt(text_chunk, category, reference_words)
-                stage2_response = call_qwen(stage2_prompt, model=model, timeout=300)
+                stage2_response = call_qwen(stage2_prompt, model=model, timeout=300, api_config=api_config)
                 json_str = clean_json_string(stage2_response)
                 if json_str and json_str != "[]":
                     try:
@@ -70,7 +73,7 @@ def extract_entities_only(text_chunk, entity_dict, model=None, max_retries=3):
     return "[]"
 
 
-def run_phase1(doc_keywords=None, output_name="phase1_entities_checkpoint.xlsx", model=None, max_chunks_per_doc=0):
+def run_phase1(doc_keywords=None, output_name="phase1_entities_checkpoint.xlsx", model=None, max_chunks_per_doc=0, api_config=None):
     doc_keywords = doc_keywords or ["票据法", "支付结算办法"]
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     entity_dict = build_entity_dictionary(str(resolve_entity_dict_path()))
@@ -78,7 +81,7 @@ def run_phase1(doc_keywords=None, output_name="phase1_entities_checkpoint.xlsx",
     rows = []
     for path in target_docs:
         print(f"Processing {path.name}")
-        chunks = load_and_chunk_docx(str(path))
+        chunks = load_and_chunk_document(str(path))
         if max_chunks_per_doc and max_chunks_per_doc > 0:
             chunks = chunks[:max_chunks_per_doc]
         for index, chunk in enumerate(chunks, 1):
@@ -87,7 +90,7 @@ def run_phase1(doc_keywords=None, output_name="phase1_entities_checkpoint.xlsx",
                 "source_document": path.stem.replace("(1)", ""),
                 "chunk_index": index,
                 "content_original": chunk,
-                "ner_entities_json": extract_entities_only(chunk, entity_dict, model=model),
+                "ner_entities_json": extract_entities_only(chunk, entity_dict, model=model, api_config=api_config),
             })
     df = pd.DataFrame(rows)
     output_path = PROCESSED_DIR / output_name
@@ -102,14 +105,23 @@ def build_parser():
     parser.add_argument("--output", default="phase1_entities_checkpoint.xlsx")
     parser.add_argument("--model", default=None)
     parser.add_argument("--max-chunks-per-doc", type=int, default=0)
-    return parser
+    return add_mysql_sync_args(parser)
 
 
 if __name__ == "__main__":
     args = build_parser().parse_args()
-    run_phase1(
+    output_path = run_phase1(
         doc_keywords=args.doc_keywords,
         output_name=args.output,
         model=args.model,
         max_chunks_per_doc=args.max_chunks_per_doc,
     )
+    sync_results = maybe_sync_artifacts_from_args(
+        args,
+        items=[("phase1_entities", output_path)],
+        default_batch_label=f"phase1-ner-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        source_dir=output_path.parent,
+        batch_extra_json={"pipeline_step": "run_stage1_2_ner"},
+    )
+    for item in sync_results:
+        print(f"MySQL sync [{item['status']}] {item['artifact_type']}: {item['path']}")
