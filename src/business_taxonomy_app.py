@@ -27,6 +27,7 @@ from business_taxonomy_pipeline import (
 from compliance_recall_controller import ComplianceRecallController
 from conflict_detection import detect_atom_conflicts
 from entity_normalization import normalize_actor_filter_terms
+from formal_qa import answer_question_formally
 from main import run_pipeline
 from mysql_traceability import (
     MySQLTraceabilityStore,
@@ -3297,6 +3298,59 @@ def build_batch_recall_summary_rows(batch_reports):
     return rows
 
 
+def render_formal_qa_result(result):
+    if not result:
+        return
+
+    st.markdown("**形式化预检**")
+    entities = result.get("detected_entities") or {}
+    entity_text = "；".join(
+        f"{label}: {', '.join(values)}"
+        for label, values in (
+            ("actor", entities.get("actors") or []),
+            ("object", entities.get("objects") or []),
+            ("time", entities.get("times") or []),
+        )
+        if values
+    )
+
+    if result.get("confidence") == "formal":
+        st.success("命中形式化快速路径。本次答案由图谱原子直接组装，未调用 LLM。")
+        metric1, metric2, metric3 = st.columns(3)
+        metric1.metric("答案数", result.get("answer_count", 0))
+        metric2.metric("问题类型", result.get("question_type") or "-")
+        metric3.metric("路由", result.get("routed_by") or "-")
+        if entity_text:
+            st.caption(f"实体命中：{entity_text}")
+        for answer in result.get("answers") or []:
+            st.write(answer.get("text", ""))
+            st.caption(
+                f"atom_id={answer.get('atom_id', '-')} | rule_type={answer.get('rule_type', '-')} | "
+                f"scene_match={'是' if answer.get('has_scene_match') else '否'}"
+            )
+        return
+
+    st.info("形式化快速路径未命中，已保留证据并转入模型召回。")
+    st.caption(result.get("fail_reason") or "未提供失败原因。")
+    if entity_text:
+        st.caption(f"实体命中：{entity_text}")
+    atoms = result.get("atoms") or []
+    if atoms:
+        evidence_rows = [
+            {
+                "atom_id": atom.get("atom_id", ""),
+                "rule_type": atom.get("rule_type", ""),
+                "source": f"{atom.get('source_document', '')}·{atom.get('article_reference', '')}",
+                "who": shorten_text(atom.get("who", ""), 36),
+                "what": shorten_text(atom.get("what", ""), 36),
+                "when": shorten_text(atom.get("when", ""), 32),
+                "scene": "是" if atom.get("has_scene_match") else "否",
+            }
+            for atom in atoms[:8]
+        ]
+        st.dataframe(pd.DataFrame(evidence_rows), width="stretch", hide_index=True)
+
+
 def render_compliance_recall_report(report):
     if report.get("final_decision") == "LLM_ERROR":
         st.warning("Qwen 当前未连通，下面展示的是本地回退结果。若你在使用 VPN，先关闭后再试。")
@@ -3978,6 +4032,7 @@ def render_scenario_tab(driver):
     recall_rounds_key = f"scenario_recall_rounds_{preset_key}"
     recall_workers_key = f"scenario_recall_workers_{preset_key}"
     recall_report_key = f"scenario_recall_report_{preset_key}"
+    formal_result_key = f"scenario_formal_result_{preset_key}"
 
     if recall_question_key not in st.session_state:
         st.session_state[recall_question_key] = preset["question"]
@@ -4015,36 +4070,86 @@ def render_scenario_tab(driver):
         submitted = st.form_submit_button("运行召回推理", width="stretch")
 
     if submitted:
-        missing = validate_llm_inputs(recall_api_key, recall_base_url, recall_model, model_label="召回模型")
-        if missing:
-            st.error(f"请先填写：{'、'.join(missing)}")
-        else:
-            report = None
-            try:
-                previous_report = st.session_state.get(recall_report_key)
-                recall_items = parse_multi_query_recall_inputs(st.session_state[recall_question_key], st.session_state[recall_query_key], default_who=st.session_state[recall_who_key])
-                if not recall_items:
-                    st.error("当前没有解析出可执行 query，请至少输入 1 条业务 query。")
-                    recall_items = []
-                resume_report = None
-                if len(recall_items) == 1 and not (isinstance(previous_report, dict) and "reports" in previous_report):
+        report = None
+        try:
+            previous_report = st.session_state.get(recall_report_key)
+            recall_items = parse_multi_query_recall_inputs(
+                st.session_state[recall_question_key],
+                st.session_state[recall_query_key],
+                default_who=st.session_state[recall_who_key],
+            )
+            if not recall_items:
+                st.session_state.pop(formal_result_key, None)
+                st.error("当前没有解析出可执行 query，请至少输入 1 条业务 query。")
+                recall_items = []
+
+            if recall_items:
+                if len(recall_items) == 1:
                     item = recall_items[0]
-                    resume_report = previous_report if should_resume_recall(previous_report, item["question"], item["query"], item["who"]) else None
-                with st.spinner("正在执行 3 轮以内的召回推理..."):
-                    with temporary_api_env(recall_api_key, recall_base_url, recall_model, recall_model):
-                        controller = get_recall_controller(recall_model, recall_api_key, recall_base_url)
-                        if len(recall_items) > 1:
-                            progress = st.progress(0, text="正在处理多 query 召回...")
-                            batch_reports = run_recall_items_parallel(controller, recall_items, max_rounds=int(st.session_state[recall_rounds_key]), max_workers=int(st.session_state[recall_workers_key]), progress=progress)
-                            progress.empty()
-                            report = {"generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "mode": "multi_query", "parallel_workers": min(int(st.session_state[recall_workers_key]), len(recall_items), MAX_RECALL_PARALLEL_WORKERS), "reports": batch_reports}
-                        elif len(recall_items) == 1:
+                    with st.spinner("正在执行形式化预检..."):
+                        try:
+                            formal_result = answer_question_formally(
+                                question=item["question"],
+                                graph=driver,
+                                query=item["query"],
+                                who=item["who"],
+                            )
+                        except Exception as exc:
+                            formal_result = {
+                                "answerable": False,
+                                "answer_count": 0,
+                                "answers": [],
+                                "confidence": "llm-inferred",
+                                "routed_by": "slow_path",
+                                "question_type": None,
+                                "detected_entities": {},
+                                "atoms": [],
+                                "fail_reason": f"formal_precheck_error: {exc}",
+                            }
+                else:
+                    formal_result = {
+                        "answerable": False,
+                        "answer_count": 0,
+                        "answers": [],
+                        "confidence": "llm-inferred",
+                        "routed_by": "slow_path",
+                        "question_type": None,
+                        "detected_entities": {},
+                        "atoms": [],
+                        "fail_reason": "multi_query_not_supported: 多 query 场景暂不走形式化快速路径。",
+                    }
+
+                st.session_state[formal_result_key] = formal_result
+                if formal_result.get("confidence") == "formal":
+                    st.session_state.pop(recall_report_key, None)
+                else:
+                    missing = validate_llm_inputs(recall_api_key, recall_base_url, recall_model, model_label="召回模型")
+                    if missing:
+                        st.error(f"请先填写：{'、'.join(missing)}")
+                    else:
+                        resume_report = None
+                        if len(recall_items) == 1 and not (isinstance(previous_report, dict) and "reports" in previous_report):
                             item = recall_items[0]
-                            report = run_recall_with_fallback(controller, question=item["question"], query=item["query"], who=item["who"], max_rounds=int(st.session_state[recall_rounds_key]), previous_report=resume_report)
-                if report:
-                    st.session_state[recall_report_key] = report
-            except Exception as exc:
-                st.error(f"召回推理执行失败：{exc}")
+                            resume_report = previous_report if should_resume_recall(previous_report, item["question"], item["query"], item["who"]) else None
+                        with st.spinner("正在执行 3 轮以内的召回推理..."):
+                            with temporary_api_env(recall_api_key, recall_base_url, recall_model, recall_model):
+                                controller = get_recall_controller(recall_model, recall_api_key, recall_base_url)
+                                if len(recall_items) > 1:
+                                    progress = st.progress(0, text="正在处理多 query 召回...")
+                                    batch_reports = run_recall_items_parallel(controller, recall_items, max_rounds=int(st.session_state[recall_rounds_key]), max_workers=int(st.session_state[recall_workers_key]), progress=progress)
+                                    progress.empty()
+                                    report = {"generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "mode": "multi_query", "parallel_workers": min(int(st.session_state[recall_workers_key]), len(recall_items), MAX_RECALL_PARALLEL_WORKERS), "reports": batch_reports}
+                                elif len(recall_items) == 1:
+                                    item = recall_items[0]
+                                    report = run_recall_with_fallback(controller, question=item["question"], query=item["query"], who=item["who"], max_rounds=int(st.session_state[recall_rounds_key]), resume_report=resume_report)
+                        if report:
+                            st.session_state[recall_report_key] = report
+        except Exception as exc:
+            st.error(f"召回推理执行失败：{exc}")
+
+    formal_result = st.session_state.get(formal_result_key)
+    if formal_result:
+        render_formal_qa_result(formal_result)
 
     recall_report = st.session_state.get(recall_report_key)
     if recall_report:

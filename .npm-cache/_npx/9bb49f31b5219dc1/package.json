@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "mcp-codex-worker": "^1.0.34"
+  },
+  "_npx": {
+    "packages": [
+      "mcp-codex-worker@latest"
+    ]
+  }
+}
